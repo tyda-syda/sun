@@ -44,7 +44,7 @@ impl UeventBacklight {
 pub fn routine() -> impl crate::Routine {
     || {
         let mut last_brightness = 0; // TODO: replace with actual value
-        let mut handle = NetlinkHandle::new();
+        let mut handle = NetlinkHandle::new().unwrap();
         let mut notif = NotifWrapper::new();
 
         loop {

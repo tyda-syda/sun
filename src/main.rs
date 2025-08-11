@@ -5,9 +5,9 @@ mod netlink;
 mod notif;
 mod sound;
 
+use notify_rust::Urgency;
 use std::process::exit;
 use std::thread::spawn;
-use notify_rust::Urgency;
 
 // workaround for type aliases, example:
 // type Routine = impl FnOnce() + Send + 'static - won't compile

@@ -96,7 +96,7 @@ impl ToString for Status {
 
 pub fn routine() -> impl crate::Routine {
     || {
-        let mut handle = NetlinkHandle::new();
+        let mut handle = NetlinkHandle::new().unwrap();
         let mut last_status = UeventPowerSupply::new().unwrap().status;
         let mut full = false;
         let mut notif = NotifWrapper::new();

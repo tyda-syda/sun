@@ -2,6 +2,18 @@ use libc;
 use std::io::Error;
 use std::mem::zeroed;
 
+macro_rules! errno_msg {
+    ($msg:literal) => {{
+        let cstr = libc::strerror(*libc::__errno_location());
+
+        format!(
+            "{}: {}",
+            $msg,
+            std::ffi::CStr::from_ptr(cstr).to_str().unwrap()
+        )
+    }};
+}
+
 pub mod utils {
     pub fn get_element_val(uevent_str: &str, name: &str) -> Option<String> {
         let delim = if uevent_str.contains("\0") {
@@ -40,7 +52,7 @@ pub struct NetlinkHandle {
 }
 
 impl NetlinkHandle {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, String> {
         unsafe {
             let fd = libc::socket(
                 libc::AF_NETLINK,
@@ -49,7 +61,7 @@ impl NetlinkHandle {
             );
 
             if fd == -1 {
-                Self::panic_errno("libc::socket error");
+                return Err(errno_msg!("libc::socket error"));
             }
 
             let mut addr = zeroed::<libc::sockaddr_nl>();
@@ -63,13 +75,13 @@ impl NetlinkHandle {
                 size_of::<libc::sockaddr_nl>() as u32,
             ) == -1
             {
-                Self::panic_errno("libc::bind error");
+                return Err(errno_msg!("libc::bind error"));
             }
 
-            Self {
+            Ok(Self {
                 fd,
                 buf: Vec::with_capacity(256),
-            }
+            })
         }
     }
 
@@ -136,9 +148,5 @@ impl NetlinkHandle {
 
     pub fn read_uevent<U: Uevent<E>, E>(&mut self) -> Result<U, NetlinkError<E>> {
         self.read_uevent_msec(-1)
-    }
-
-    fn panic_errno(msg: &str) {
-        panic!("{msg}: {:?}", Error::last_os_error());
     }
 }
