@@ -104,6 +104,11 @@ pub fn routine() -> impl crate::Routine {
         let mut poll_timeout = BATTERY_POLL_TIMEOUT;
         let mut full = false;
 
+        notif
+            .summary("Battery")
+            .urgency(Urgency::Normal)
+            .icon("/usr/share/icons/Adwaita/symbolic/status/");
+
         loop {
             match handle.read_uevent_msec::<UeventPowerSupply, String>(poll_timeout) {
                 Ok(ev) => {
@@ -116,32 +121,28 @@ pub fn routine() -> impl crate::Routine {
                     last_status = ev.status;
 
                     notif
-                        .summary("Battery")
                         .body(last_status.to_string().as_str())
-                        .urgency(Urgency::Normal)
-                        .timeout(2500)
-                        .icon("/usr/share/icons/Adwaita/symbolic/status/");
+                        .timeout(2500);
 
-                    notif.icon += match last_status {
-                        Status::Discharging => "battery-level-30-symbolic.svg",
-                        Status::Charging => "battery-level-30-charging-symbolic.svg",
+                    let part = std::cmp::max(ev.capacity / 10, 1);
+                    let icon = match last_status {
+                        Status::Discharging => format!("battery-level-{part}0-symbolic.svg"),
+                        Status::Charging => format!("battery-level-{part}0-charging-symbolic.svg"),
                         _ => {
                             println!("unknown battery status: {last_status:?}");
                             continue;
                         }
                     };
 
+                    notif.icon.push_str(&icon);
                     notif.show();
                 }
                 Err(NetlinkError::Timeout) => {
                     let uevent = UeventPowerSupply::new().unwrap();
 
                     notif
-                        .summary("Battery")
                         .body(last_status.to_string().as_str())
-                        .urgency(Urgency::Normal)
-                        .timeout(0)
-                        .icon("/usr/share/icons/Adwaita/symbolic/status/");
+                        .timeout(0);
 
                     if !full && uevent.status == Status::Full {
                         full = true;
