@@ -1,5 +1,6 @@
 use notify_rust::{Notification, NotificationHandle};
 
+#[derive(Debug)]
 pub struct NotifWrapper {
     inner: Notification,
     handle: Option<NotificationHandle>,

@@ -1,5 +1,5 @@
 use libpulse_binding as pa;
-use notify_rust::{Hint, Notification, Timeout, Urgency};
+use notify_rust::{Hint, Timeout, Urgency};
 use pa::callbacks::ListResult;
 use pa::context::introspect::{SinkInfo, SourceInfo};
 use pa::context::subscribe::{Facility, InterestMaskSet};
@@ -12,12 +12,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use zbus::blocking::connection;
 use zvariant;
+use crate::notif::NotifWrapper;
 
 const DEFAULT_NOTIFICATION_TIMEOUT: i32 = 2500; // millis
 const BLUETOOTH_POLL_TIMEOUT: u64 = 30; // secs
 const BLUETOOTH_BATTERY_WARN_AT: u8 = 15;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct PulseEventData {
     index: u32,
     description: String,
@@ -43,9 +44,9 @@ struct ContextHelper {
     event_queue: Rc<RefCell<Vec<PulseEvent>>>,
 }
 
-struct NotificationHelper {
+struct NotifHelper {
     zbus: zbus::blocking::Connection,
-    notif_handle: Option<notify_rust::NotificationHandle>,
+    notif: NotifWrapper,
 }
 
 impl PartialEq<SinkInfo<'static>> for PulseEventData {
@@ -238,19 +239,15 @@ impl ContextHelper {
     }
 }
 
-impl NotificationHelper {
+impl NotifHelper {
     fn new() -> Self {
         Self {
             zbus: connection::Connection::system().unwrap(),
-            notif_handle: None,
+            notif: NotifWrapper::new(),
         }
     }
 
     fn bluetooth_battery(&self, props: &Proplist) -> Option<u8> {
-        if props.get_str("device.bus")? != "bluetooth" {
-            return None;
-        }
-
         let bluez_path = props.get_str("api.bluez5.path")?;
         let body = self
             .zbus
@@ -276,7 +273,8 @@ impl NotificationHelper {
     ) -> Option<MicroSeconds> {
         let mut poll_timeout = None;
         let mut low_battery = false;
-        let mut notif = Notification::new()
+
+        self.notif
             .urgency(Urgency::Normal)
             .timeout(DEFAULT_NOTIFICATION_TIMEOUT)
             .summary("Sound")
@@ -285,46 +283,47 @@ impl NotificationHelper {
                 "value".into(),
                 pa_volume_to_percent(sink_info.volume),
             ))
-            .icon("/usr/share/icons/Adwaita/symbolic/status/audio-volume-high-symbolic.svg")
-            .finalize();
+            .icon("/usr/share/icons/Adwaita/symbolic/status/audio-volume-high-symbolic.svg");
 
+        if let Some(bus) = sink_info.props.get_str("device.bus") {
+            if bus == "bluetooth" {
+                self.notif.body = sink_info.description.clone();
+            }
+        }
+
+        // we can receive new device event before it can register its battery in dbus
         if let Some(battery) = self.bluetooth_battery(&sink_info.props) {
-            notif.body = sink_info.description.clone();
             poll_timeout = Some(MicroSeconds::from_secs(BLUETOOTH_POLL_TIMEOUT).unwrap());
 
             if battery <= BLUETOOTH_BATTERY_WARN_AT {
                 low_battery = true;
-                notif
+
+                self.notif.timeout = Timeout::Never;
+                self.notif.urgency(Urgency::Critical);
+                self.notif
                     .body
-                    .push_str(format!(" ({}%) Low battery", battery).as_str());
-                notif.timeout = Timeout::Never;
-                notif.urgency(Urgency::Critical);
+                    .push_str(&format!(" ({}%) Low battery", battery));
             } else {
-                notif.body.push_str(&format!(" ({}%)", battery));
+                self.notif.body.push_str(&format!(" ({}%)", battery));
             }
         };
 
         if sink_info.mute {
-            notif.summary.push_str(" muted");
-            notif.icon = String::from(
+            self.notif.summary.push_str(" muted");
+            self.notif.icon = String::from(
                 "/usr/share/icons/Adwaita/symbolic/status/audio-volume-muted-symbolic.svg",
             );
         }
 
         if !only_low || low_battery {
-            if let Some(handle) = &mut self.notif_handle {
-                **handle = notif;
-                handle.update();
-            } else {
-                self.notif_handle = Some(notif.show().unwrap());
-            };
+            self.notif.show();
         }
 
         poll_timeout
     }
 
     fn show_source_notification(&mut self, source_info: &PulseEventData) {
-        let mut notif = Notification::new()
+        self.notif
             .summary("Mic")
             .body("Volume")
             .urgency(Urgency::Normal)
@@ -335,22 +334,16 @@ impl NotificationHelper {
             .hint(Hint::CustomInt(
                 "value".into(),
                 pa_volume_to_percent(source_info.volume),
-            ))
-            .finalize();
+            ));
 
         if source_info.mute {
-            notif.summary.push_str(" muted");
-            notif.icon = String::from(
+            self.notif.summary.push_str(" muted");
+            self.notif.icon = String::from(
                 "/usr/share/icons/Adwaita/symbolic/status/microphone-disabled-symbolic.svg",
             );
         }
 
-        if let Some(handle) = &mut self.notif_handle {
-            **handle = notif;
-            handle.update();
-        } else {
-            self.notif_handle = Some(notif.show().unwrap());
-        };
+        self.notif.show();
     }
 }
 
@@ -361,7 +354,7 @@ fn pa_volume_to_percent(volume: u32) -> i32 {
 pub fn routine() -> impl crate::Routine {
     || {
         let mut context_helper = ContextHelper::new();
-        let mut notif_helper = NotificationHelper::new();
+        let mut notif_helper = NotifHelper::new();
         let mut poll_timeout = notif_helper
             .bluetooth_battery(&context_helper.get_default_sink_info().proplist)
             .map(|_| MicroSeconds::from_secs(BLUETOOTH_POLL_TIMEOUT).unwrap());
