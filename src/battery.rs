@@ -8,6 +8,7 @@ use std::str::FromStr;
 const BATTERY_POLL_TIMEOUT: i32 = 15 * 1000; // msec
 const BATTERY_WARN_AT: u8 = 15;
 const SYS_PATH: &'static str = "/sys/class/power_supply/BAT0/uevent";
+const ICONS_PATH: &'static str = "/usr/share/icons/Adwaita/symbolic/status/";
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum Status {
@@ -104,10 +105,7 @@ pub fn routine() -> impl crate::Routine {
         let mut poll_timeout = BATTERY_POLL_TIMEOUT;
         let mut full = false;
 
-        notif
-            .summary("Battery")
-            .urgency(Urgency::Normal)
-            .icon("/usr/share/icons/Adwaita/symbolic/status/");
+        notif.summary("Battery");
 
         loop {
             match handle.read_uevent_msec::<UeventPowerSupply, String>(poll_timeout) {
@@ -121,15 +119,18 @@ pub fn routine() -> impl crate::Routine {
                     last_status = ev.status;
 
                     notif
+                        .urgency(Urgency::Normal)
                         .body(last_status.to_string().as_str())
+                        .icon(ICONS_PATH)
                         .timeout(2500);
 
                     let part = std::cmp::max(ev.capacity / 10, 1);
                     let icon = match last_status {
                         Status::Discharging => format!("battery-level-{part}0-symbolic.svg"),
                         Status::Charging => format!("battery-level-{part}0-charging-symbolic.svg"),
-                        _ => {
-                            println!("unknown battery status: {last_status:?}");
+                        Status::Full => format!("battery-level-100-charged-symbolic.svg"),
+                        Status::Unknown(ref status) => {
+                            println!("unknown battery status: {status}");
                             continue;
                         }
                     };
@@ -141,7 +142,9 @@ pub fn routine() -> impl crate::Routine {
                     let uevent = UeventPowerSupply::new().unwrap();
 
                     notif
+                        .urgency(Urgency::Normal)
                         .body(last_status.to_string().as_str())
+                        .icon(ICONS_PATH)
                         .timeout(0);
 
                     if !full && uevent.status == Status::Full {
@@ -158,8 +161,8 @@ pub fn routine() -> impl crate::Routine {
                     let cap = uevent.capacity;
 
                     if uevent.status == Status::Discharging && cap <= BATTERY_WARN_AT {
-                        notif.body(format!("{cap}% left, connect charger").as_str());
                         notif.urgency(Urgency::Critical);
+                        notif.body(format!("{cap}% left, connect charger").as_str());
                         notif.icon += "battery-caution-symbolic.svg";
                         notif.show();
                     }
