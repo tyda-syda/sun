@@ -18,18 +18,8 @@ const DEFAULT_NOTIFICATION_TIMEOUT: i32 = 2500; // millis
 const BLUETOOTH_POLL_TIMEOUT: u64 = 30; // secs
 const BLUETOOTH_BATTERY_WARN_AT: u8 = 15;
 
-#[derive(Clone, Debug)]
-struct PulseEventData {
-    index: u32,
-    description: String,
-    volume: u32,
-    mute: bool,
-    props: Proplist,
-}
-
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct PulseEvent {
-    data: PulseEventData,
     facility: Facility,
 }
 
@@ -47,42 +37,6 @@ struct ContextHelper {
 struct NotifHelper {
     zbus: zbus::blocking::Connection,
     notif: NotifWrapper,
-}
-
-impl PartialEq<SinkInfo<'static>> for PulseEventData {
-    fn eq(&self, other: &SinkInfo<'static>) -> bool {
-        self.volume == other.volume.avg().0 && self.mute == other.mute
-    }
-}
-
-impl PartialEq<SourceInfo<'static>> for PulseEventData {
-    fn eq(&self, other: &SourceInfo<'static>) -> bool {
-        self.volume == other.volume.avg().0 && self.mute == other.mute
-    }
-}
-
-impl From<SinkInfo<'static>> for PulseEventData {
-    fn from(value: SinkInfo<'static>) -> Self {
-        Self {
-            index: value.index,
-            description: value.description.unwrap().to_string(),
-            volume: value.volume.avg().0,
-            mute: value.mute,
-            props: value.proplist,
-        }
-    }
-}
-
-impl From<SourceInfo<'static>> for PulseEventData {
-    fn from(value: SourceInfo<'static>) -> Self {
-        Self {
-            index: value.index,
-            description: value.description.unwrap().to_string(),
-            volume: value.volume.avg().0,
-            mute: value.mute,
-            props: value.proplist,
-        }
-    }
 }
 
 impl ContextHelper {
@@ -119,41 +73,17 @@ impl ContextHelper {
     }
 
     fn subscribe(&mut self) {
-        let intro = self.context.introspect();
         let event_queue = Rc::clone(&self.event_queue);
 
         self.context
             .set_subscribe_callback(Some(Box::new(move |facility, _operation, _index| {
-                let event_queue = event_queue.clone(); // necessary due to inner move closure
-
                 match facility.unwrap() {
-                    Facility::Sink => {
-                        intro.get_sink_info_by_name("@DEFAULT_SINK@", move |res| match res {
-                            ListResult::Item(info) => {
-                                let event = PulseEvent {
-                                    data: PulseEventData::from(info.to_owned()),
-                                    facility: facility.unwrap(),
-                                };
+                    Facility::Sink | Facility::Source => {
+                        let event = PulseEvent {
+                            facility: facility.unwrap(),
+                        };
 
-                                event_queue.borrow_mut().push(event);
-                            }
-                            ListResult::End => (),
-                            ListResult::Error => panic!("error iterate result"),
-                        });
-                    }
-                    Facility::Source => {
-                        intro.get_source_info_by_name("@DEFAULT_SOURCE@", move |res| match res {
-                            ListResult::Item(info) => {
-                                let event = PulseEvent {
-                                    data: PulseEventData::from(info.to_owned()),
-                                    facility: facility.unwrap(),
-                                };
-
-                                event_queue.borrow_mut().push(event);
-                            }
-                            ListResult::End => (),
-                            ListResult::Error => panic!("error iterate result"),
-                        });
+                        event_queue.borrow_mut().push(event);
                     }
                     _ => (),
                 }
@@ -268,7 +198,7 @@ impl NotifHelper {
 
     fn show_sink_notification(
         &mut self,
-        sink_info: &PulseEventData,
+        sink_info: &SinkInfo<'static>,
         only_low: bool,
     ) -> Option<MicroSeconds> {
         let mut poll_timeout = None;
@@ -281,18 +211,18 @@ impl NotifHelper {
             .body("Volume")
             .hint(Hint::CustomInt(
                 "value".into(),
-                pa_volume_to_percent(sink_info.volume),
+                pa_volume_to_percent(sink_info.volume.avg().0),
             ))
             .icon("/usr/share/icons/Adwaita/symbolic/status/audio-volume-high-symbolic.svg");
 
-        if let Some(bus) = sink_info.props.get_str("device.bus") {
+        if let Some(bus) = sink_info.proplist.get_str("device.bus") {
             if bus == "bluetooth" {
-                self.notif.body = sink_info.description.clone();
+                self.notif.body = sink_info.description.clone().unwrap().to_string();
             }
         }
 
         // we can receive new device event before it can register its battery in dbus
-        if let Some(battery) = self.bluetooth_battery(&sink_info.props) {
+        if let Some(battery) = self.bluetooth_battery(&sink_info.proplist) {
             poll_timeout = Some(MicroSeconds::from_secs(BLUETOOTH_POLL_TIMEOUT).unwrap());
 
             if battery <= BLUETOOTH_BATTERY_WARN_AT {
@@ -322,7 +252,7 @@ impl NotifHelper {
         poll_timeout
     }
 
-    fn show_source_notification(&mut self, source_info: &PulseEventData) {
+    fn show_source_notification(&mut self, source_info: &SourceInfo<'static>) {
         self.notif
             .summary("Mic")
             .body("Volume")
@@ -333,7 +263,7 @@ impl NotifHelper {
             )
             .hint(Hint::CustomInt(
                 "value".into(),
-                pa_volume_to_percent(source_info.volume),
+                pa_volume_to_percent(source_info.volume.avg().0),
             ));
 
         if source_info.mute {
@@ -355,6 +285,8 @@ pub fn routine() -> impl crate::Routine {
     || {
         let mut context_helper = ContextHelper::new();
         let mut notif_helper = NotifHelper::new();
+        let mut default_sink = context_helper.get_default_sink_info();
+        let mut default_source = context_helper.get_default_source_info();
         let mut poll_timeout = notif_helper
             .bluetooth_battery(&context_helper.get_default_sink_info().proplist)
             .map(|_| MicroSeconds::from_secs(BLUETOOTH_POLL_TIMEOUT).unwrap());
@@ -362,47 +294,43 @@ pub fn routine() -> impl crate::Routine {
         context_helper.subscribe();
 
         loop {
-            let mut default_sink = context_helper.get_default_sink_info();
-            let mut default_source = context_helper.get_default_source_info();
-
             match context_helper.poll_events(poll_timeout) {
                 PollResult::Data(events) => {
                     for event in events {
-                        let info = event.data;
-
                         match event.facility {
                             Facility::Sink => {
                                 let current_default_sink = context_helper.get_default_sink_info();
 
-                                if default_sink.index != current_default_sink.index {
-                                    default_sink = current_default_sink;
-                                } else if info.index != default_sink.index || info == default_sink {
+                                if current_default_sink.index == default_sink.index
+                                    && current_default_sink.volume.avg().0 == default_sink.volume.avg().0
+                                    && current_default_sink.mute == default_sink.mute
+                                {
                                     continue;
                                 }
 
-                                poll_timeout = notif_helper.show_sink_notification(&info, false);
+                                default_sink = current_default_sink;
+                                poll_timeout = notif_helper.show_sink_notification(&default_sink, false);
                             }
                             Facility::Source => {
                                 let current_default_source =
                                     context_helper.get_default_source_info();
 
-                                if default_source.index != current_default_source.index {
-                                    default_source = current_default_source;
-                                    continue;
-                                } else if info.index != default_source.index
-                                    || info == default_source
+                                if current_default_source.index == default_source.index
+                                    && current_default_source.volume.avg().0 == default_source.volume.avg().0
+                                    && current_default_source.mute == default_source.mute
                                 {
                                     continue;
                                 }
 
-                                notif_helper.show_source_notification(&info);
+                                default_source = current_default_source;
+                                notif_helper.show_source_notification(&default_source);
                             }
                             _ => continue,
                         }
                     }
                 }
                 PollResult::Timeout => {
-                    let sink_info = PulseEventData::from(context_helper.get_default_sink_info());
+                    let sink_info = context_helper.get_default_sink_info();
 
                     poll_timeout = notif_helper.show_sink_notification(&sink_info, true);
                 }
