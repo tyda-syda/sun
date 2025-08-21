@@ -1,6 +1,5 @@
 use notify_rust::{Notification, NotificationHandle};
 
-#[derive(Debug)]
 pub struct NotifWrapper {
     inner: Notification,
     handle: Option<NotificationHandle>,
@@ -21,6 +20,11 @@ impl NotifWrapper {
         } else {
             self.handle = Some(self.inner.show().unwrap());
         };
+
+        // call to hint(Urgency::Normal) and hint(Urgency::Critical)
+        // will place multiple urgencies for the same notification
+        // to avoid it, we must clean all hints at the end
+        self.inner.hints.clear();
     }
 }
 
