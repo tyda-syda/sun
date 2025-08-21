@@ -1,3 +1,4 @@
+use crate::notif::NotifWrapper;
 use libpulse_binding as pa;
 use notify_rust::{Hint, Timeout, Urgency};
 use pa::callbacks::ListResult;
@@ -12,11 +13,16 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use zbus::blocking::connection;
 use zvariant;
-use crate::notif::NotifWrapper;
 
 const DEFAULT_NOTIFICATION_TIMEOUT: i32 = 2500; // millis
 const BLUETOOTH_POLL_TIMEOUT: u64 = 30; // secs
 const BLUETOOTH_BATTERY_WARN_AT: u8 = 15;
+
+macro_rules! pa_info_eq {
+    ($info1:ident, $info2:ident) => {
+        ($info1.volume.avg().0 == $info2.volume.avg().0 && $info1.mute == $info2.mute)
+    };
+}
 
 #[derive(Debug, Clone)]
 struct PulseEvent {
@@ -76,8 +82,8 @@ impl ContextHelper {
         let event_queue = Rc::clone(&self.event_queue);
 
         self.context
-            .set_subscribe_callback(Some(Box::new(move |facility, _operation, _index| {
-                match facility.unwrap() {
+            .set_subscribe_callback(Some(Box::new(
+                move |facility, _operation, _index| match facility.unwrap() {
                     Facility::Sink | Facility::Source => {
                         let event = PulseEvent {
                             facility: facility.unwrap(),
@@ -86,8 +92,8 @@ impl ContextHelper {
                         event_queue.borrow_mut().push(event);
                     }
                     _ => (),
-                }
-            })));
+                },
+            )));
     }
 
     fn poll_events(&mut self, timeout: Option<MicroSeconds>) -> PollResult {
@@ -302,27 +308,27 @@ pub fn routine() -> impl crate::Routine {
                                 let current_default_sink = context_helper.get_default_sink_info();
 
                                 if current_default_sink.index == default_sink.index
-                                    && current_default_sink.volume.avg().0 == default_sink.volume.avg().0
-                                    && current_default_sink.mute == default_sink.mute
+                                    && pa_info_eq!(current_default_sink, default_sink)
                                 {
                                     continue;
                                 }
 
                                 default_sink = current_default_sink;
-                                poll_timeout = notif_helper.show_sink_notification(&default_sink, false);
+                                poll_timeout =
+                                    notif_helper.show_sink_notification(&default_sink, false);
                             }
                             Facility::Source => {
                                 let current_default_source =
                                     context_helper.get_default_source_info();
 
-                                if current_default_source.index == default_source.index
-                                    && current_default_source.volume.avg().0 == default_source.volume.avg().0
-                                    && current_default_source.mute == default_source.mute
+                                // skip if default microphone was changed
+                                if current_default_source.index != default_source.index
+                                    || pa_info_eq!(current_default_source, default_source)
                                 {
+                                    default_source = current_default_source;
                                     continue;
                                 }
 
-                                default_source = current_default_source;
                                 notif_helper.show_source_notification(&default_source);
                             }
                             _ => continue,
