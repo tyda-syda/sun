@@ -211,7 +211,6 @@ impl NotifHelper {
         let mut low_battery = false;
 
         self.notif
-            .urgency(Urgency::Normal)
             .timeout(DEFAULT_NOTIFICATION_TIMEOUT)
             .summary("Sound")
             .body("Volume")
