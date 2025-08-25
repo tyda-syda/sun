@@ -321,10 +321,12 @@ pub fn routine() -> impl crate::Routine {
                                     context_helper.get_default_source_info();
 
                                 // skip if default microphone was changed
-                                if current_default_source.index != default_source.index
-                                    || pa_info_eq!(current_default_source, default_source)
-                                {
+                                if current_default_source.index != default_source.index {
                                     default_source = current_default_source;
+                                    continue;
+                                }
+
+                                if pa_info_eq!(current_default_source, default_source) {
                                     continue;
                                 }
 
