@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::notif::NotifWrapper;
 use libpulse_binding as pa;
 use notify_rust::{Hint, Timeout, Urgency};
@@ -16,7 +17,6 @@ use zvariant;
 
 const DEFAULT_NOTIFICATION_TIMEOUT: i32 = 2500; // millis
 const BLUETOOTH_POLL_TIMEOUT: u64 = 30; // secs
-const BLUETOOTH_BATTERY_WARN_AT: u8 = 15;
 
 macro_rules! pa_info_eq {
     ($info1:ident, $info2:ident) => {
@@ -209,6 +209,9 @@ impl NotifHelper {
     ) -> Option<MicroSeconds> {
         let mut poll_timeout = None;
         let mut low_battery = false;
+        let config = Config::get();
+        let config_sound = &config.sound;
+        let icon_path = config_sound.icon_path.as_ref().unwrap_or(&config.icon_path);
 
         self.notif
             .timeout(DEFAULT_NOTIFICATION_TIMEOUT)
@@ -217,8 +220,7 @@ impl NotifHelper {
             .hint(Hint::CustomInt(
                 "value".into(),
                 pa_volume_to_percent(sink_info.volume.avg().0),
-            ))
-            .icon("/usr/share/icons/Adwaita/symbolic/status/audio-volume-high-symbolic.svg");
+            ));
 
         if let Some(bus) = sink_info.proplist.get_str("device.bus") {
             if bus == "bluetooth" {
@@ -228,12 +230,20 @@ impl NotifHelper {
 
         // we can receive new device event before it can register its battery in dbus
         if let Some(battery) = self.bluetooth_battery(&sink_info.proplist) {
-            poll_timeout = Some(MicroSeconds::from_secs(BLUETOOTH_POLL_TIMEOUT).unwrap());
+            poll_timeout = Some(
+                MicroSeconds::from_secs(config_sound.sink_bluetooth_battery_poll_timeout).unwrap(),
+            );
 
-            if battery <= BLUETOOTH_BATTERY_WARN_AT {
+            if battery <= config_sound.sink_bluetooth_low_battery_warn_at {
+                let timeout = config_sound.sink_bluetooth_low_battery_timeout;
                 low_battery = true;
 
-                self.notif.timeout = Timeout::Never;
+                self.notif.timeout = if timeout < 0 {
+                    Timeout::Never
+                } else {
+                    Timeout::Milliseconds(timeout as u32)
+                };
+
                 self.notif.urgency(Urgency::Critical);
                 self.notif
                     .body
@@ -245,9 +255,9 @@ impl NotifHelper {
 
         if sink_info.mute {
             self.notif.summary.push_str(" muted");
-            self.notif.icon = String::from(
-                "/usr/share/icons/Adwaita/symbolic/status/audio-volume-muted-symbolic.svg",
-            );
+            self.notif.icon = format!("{icon_path}{}", config_sound.icon_sink_muted);
+        } else {
+            self.notif.icon = format!("{icon_path}{}", config_sound.icon_sink);
         }
 
         if !only_low || low_battery {
@@ -299,6 +309,13 @@ pub fn routine() -> impl crate::Routine {
         context_helper.subscribe();
 
         loop {
+            if Config::get().sound.off {
+                context_helper.main_loop.quit(pa::def::Retval(0));
+                context_helper.context.disconnect();
+                dbg!("sound module disabled");
+                break;
+            }
+
             match context_helper.poll_events(poll_timeout) {
                 PollResult::Data(events) => {
                     for event in events {
@@ -332,7 +349,7 @@ pub fn routine() -> impl crate::Routine {
 
                                 notif_helper.show_source_notification(&default_source);
                             }
-                            _ => continue,
+                            _ => (),
                         }
                     }
                 }

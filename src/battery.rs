@@ -1,8 +1,10 @@
+use crate::config::Config;
 use crate::netlink::utils as ev_utils;
 use crate::netlink::{NetlinkError, NetlinkHandle, Uevent};
 use crate::notif::NotifWrapper;
 use notify_rust::Urgency;
 use std::fs;
+use std::io::ErrorKind;
 use std::str::FromStr;
 
 const BATTERY_POLL_TIMEOUT: i32 = 15 * 1000; // msec
@@ -108,6 +110,11 @@ pub fn routine() -> impl crate::Routine {
         notif.summary("Battery");
 
         loop {
+            if Config::get().battery.off {
+                dbg!("battery module disabled");
+                break;
+            }
+
             match handle.read_uevent_msec::<UeventPowerSupply, String>(poll_timeout) {
                 Ok(ev) => {
                     if ev.status == last_status {
@@ -167,6 +174,7 @@ pub fn routine() -> impl crate::Routine {
                         notif.show();
                     }
                 }
+                Err(NetlinkError::IO(ErrorKind::Interrupted)) => (),
                 Err(NetlinkError::IO(kind)) => panic!("{kind:?}"),
                 Err(_) => (),
             }

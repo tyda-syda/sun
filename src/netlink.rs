@@ -2,6 +2,7 @@ use libc;
 use std::io::Error;
 use std::mem::zeroed;
 
+#[macro_export]
 macro_rules! errno_msg {
     ($msg:literal) => {{
         let cstr = libc::strerror(*libc::__errno_location());
