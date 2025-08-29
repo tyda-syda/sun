@@ -12,4 +12,6 @@ zbus = "5.9.0"
 zvariant = "5.6.0"
 serde = "1.0.219"
 serde_json = "1.0.142"
+knuffel = "3.2.0"
+inotify = "0.11.0"
 

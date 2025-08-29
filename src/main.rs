@@ -1,13 +1,17 @@
 mod battery;
 mod brightness;
 mod keyboard;
+#[macro_use]
 mod netlink;
+mod config;
 mod notif;
 mod sound;
 
 use notify_rust::Urgency;
+use std::collections::HashMap;
+use std::os::unix::thread::JoinHandleExt;
 use std::process::exit;
-use std::thread::spawn;
+use std::thread::{spawn, JoinHandle};
 
 // workaround for type aliases, example:
 // type Routine = impl FnOnce() + Send + 'static - won't compile
@@ -15,14 +19,45 @@ trait Routine: FnOnce() + Send + 'static {}
 
 impl<T: FnOnce() + Send + 'static> Routine for T {}
 
+extern "C" fn sa_action(_: libc::c_int) {
+    dbg!("sa_action");
+}
+
+fn update_routine<'a>(
+    name: &'a str,
+    routines: &mut HashMap<&'a str, JoinHandle<()>>,
+    off: bool,
+    routine: impl Routine + 'a,
+) {
+    if let Some(handle) = routines.get_mut(name) {
+        unsafe {
+            if libc::pthread_kill(handle.as_pthread_t(), libc::SIGUSR1) != 0 {
+                println!("{}", errno_msg!("pthread_kill error"));
+                exit(-1);
+            }
+        }
+
+        if off {
+            routines.remove(name).unwrap().join().unwrap();
+        }
+    } else {
+        if !off {
+            routines.insert(name, spawn(routine));
+        }
+    }
+}
+
 fn main() {
     let (sender, reciever) = std::sync::mpsc::sync_channel::<String>(1);
+    let hook_sender = sender.clone();
+
+    config::Config::update();
 
     std::panic::set_hook(Box::new(move |info| {
         let mut notif = notif::NotifWrapper::new();
         let payload = info.payload();
         let try_send = |p| {
-            if let Err(e) = sender.send(format!(
+            if let Err(e) = hook_sender.send(format!(
                 "panic at '{}' - {p}\n{}",
                 info.location().unwrap(), // blindly believing in rust docs that it won't ever panic
                 std::backtrace::Backtrace::force_capture()
@@ -50,13 +85,76 @@ fn main() {
         }
     }));
 
-    spawn(brightness::routine());
-    spawn(keyboard::routine());
-    spawn(battery::routine());
-    spawn(sound::routine());
+    unsafe {
+        let mut action = std::mem::zeroed::<libc::sigaction>();
 
-    match reciever.recv() {
-        Ok(v) => println!("{v}"),
-        Err(e) => println!("mpsc reciever error: {e:?}"),
+        action.sa_sigaction = sa_action as usize;
+        action.sa_flags = libc::SA_NODEFER;
+
+        if libc::sigaction(
+            libc::SIGUSR1,
+            &action as *const libc::sigaction,
+            std::ptr::null_mut(),
+        ) == -1
+        {
+            panic!("sigaction err");
+        }
+    }
+
+    let mut routines = HashMap::new();
+    let config = config::Config::get();
+
+    if !config.sound.off {
+        routines.insert("sound", spawn(sound::routine()));
+    }
+
+    if !config.battery.off {
+        routines.insert("battery", spawn(battery::routine()));
+    }
+
+    if !config.keyboard.off {
+        routines.insert("keyboard", spawn(keyboard::routine()));
+    }
+
+    if !config.brightness.off {
+        routines.insert("brightness", spawn(brightness::routine()));
+    }
+
+    spawn(config::routine(sender));
+
+    loop {
+        match reciever.recv() {
+            Ok(v) if v == "cfg_update" => {
+                let config = config::Config::get();
+
+                update_routine("sound", &mut routines, config.sound.off, sound::routine());
+                update_routine(
+                    "battery",
+                    &mut routines,
+                    config.battery.off,
+                    battery::routine(),
+                );
+                update_routine(
+                    "keyboard",
+                    &mut routines,
+                    config.keyboard.off,
+                    keyboard::routine(),
+                );
+                update_routine(
+                    "brightness",
+                    &mut routines,
+                    config.brightness.off,
+                    brightness::routine(),
+                );
+            }
+            Ok(v) => {
+                println!("{v}");
+                break;
+            }
+            Err(e) => {
+                println!("mpsc reciever error: {e:?}");
+                break;
+            }
+        }
     }
 }

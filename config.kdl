@@ -1,0 +1,19 @@
+icon-path "/usr/share/icons/Adwaita/symbolic/"
+panic-notification
+
+sound {
+    icon-sink "status/audio-volume-high-symbolic.svg"
+    icon-sink-muted "status/audio-volume-muted-symbolic.svg"
+    icon-sink-bluetooth "status/audio-volume-high-symbolic.svg"
+    icon-source "status/microphone-sensitivity-high-symbolic.svg"
+}
+
+battery {
+}
+
+brightness {
+}
+
+keyboard {
+}
+

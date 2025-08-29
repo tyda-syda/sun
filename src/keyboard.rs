@@ -1,9 +1,12 @@
+use crate::config::Config;
 use crate::notif::NotifWrapper;
 use serde_json;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Error, ErrorKind, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use xcb::xkb;
+
+type LayoutFunc = Box<dyn FnMut() -> Result<String, Error>>;
 
 mod niri {
     use serde::{Deserialize, Serialize};
@@ -31,7 +34,19 @@ mod niri {
     }
 }
 
-fn try_x11() -> Option<impl FnMut() -> String> {
+fn map_xcb_err(err: xcb::Error) -> Error {
+    match err {
+        xcb::Error::Connection(xcb::ConnError::Connection) => Error::last_os_error().into(),
+        xcb::Error::Connection(err) => {
+            Error::new(ErrorKind::Other, format!("xcb connection err: {err:#?}"))
+        }
+        xcb::Error::Protocol(err) => {
+            Error::new(ErrorKind::Other, format!("xcb protocol err: {err:#?}"))
+        }
+    }
+}
+
+fn x11() -> Option<LayoutFunc> {
     let conn = xcb::Connection::connect_with_extensions(None, &[xcb::Extension::Xkb], &[])
         .ok()?
         .0;
@@ -58,16 +73,16 @@ fn try_x11() -> Option<impl FnMut() -> String> {
         map: xkb::MapPart::empty(),
         details: &[],
     }))
-    .unwrap();
+    .ok()?;
 
     let mut current_group = conn
         .wait_for_reply(conn.send_request(&xkb::GetState {
             device_spec: core_kbd,
         }))
-        .unwrap()
+        .ok()?
         .group();
 
-    let layout = move || loop {
+    let func = move || loop {
         break match conn.wait_for_event() {
             Ok(xcb::Event::Xkb(xkb::Event::StateNotify(state))) => {
                 if state.group() == current_group {
@@ -80,7 +95,7 @@ fn try_x11() -> Option<impl FnMut() -> String> {
                     device_spec: core_kbd,
                     which: xkb::NameDetail::GROUP_NAMES,
                 }))
-                .unwrap()
+                .map_err(map_xcb_err)?
                 .value_list()
                 .iter()
                 .filter_map(|val| match val {
@@ -96,36 +111,44 @@ fn try_x11() -> Option<impl FnMut() -> String> {
                         .to_owned()
                 })
                 .nth(current_group as usize)
+                .map(|layout| Ok(layout))
                 .unwrap()
             }
             Ok(_) => {
                 continue;
             }
-            Err(err) => {
-                println!("xcb recieved error event: {err:?}");
-                continue;
-            }
+            Err(err) => Err(map_xcb_err(err)),
         };
     };
 
-    Some(layout)
+    Some(Box::new(func))
 }
 
-fn try_niri() -> Option<impl FnMut() -> String> {
+fn niri() -> Option<LayoutFunc> {
     let mut sock = UnixStream::connect(std::env::var("NIRI_SOCKET").ok()?).ok()?;
     let mut buf_reader = BufReader::new(sock.try_clone().unwrap());
-    let mut buf = String::new();
     let mut layouts = Vec::new();
 
     sock.write_all(b"\"EventStream\"\n").unwrap();
     sock.shutdown(Shutdown::Write).unwrap();
-    buf_reader.read_line(&mut buf).unwrap(); // discard OK reponse
+    buf_reader.read_line(&mut String::new()).unwrap(); // discard OK reponse
 
-    let layout = move || loop {
-        buf.clear();
-        buf_reader.read_line(&mut buf).unwrap();
+    let func = move || loop {
+        // do not use BufReader::read_line() here
+        // it ignores EINTR inside of BufReader::read_until()
+        let (msg, num) = 'outer: loop {
+            let msg = buf_reader.fill_buf().map_err(|e| e.kind())?;
 
-        break match serde_json::from_str::<niri::Response>(&buf) {
+            for idx in 0..msg.len() {
+                if msg[idx] == b'\n' {
+                    break 'outer (String::from_utf8(Vec::from(&msg[..idx])).unwrap(), idx + 1);
+                }
+            }
+        };
+
+        buf_reader.consume(num);
+
+        break match serde_json::from_str::<niri::Response>(&msg) {
             Ok(niri::Response::KeyboardLayoutsChanged(niri::KeyboardLayoutsChanged {
                 keyboard_layouts,
                 ..
@@ -135,31 +158,48 @@ fn try_niri() -> Option<impl FnMut() -> String> {
                 continue;
             }
             Ok(niri::Response::KeyboardLayoutSwitched(niri::KeyboardLayoutSwitched { idx })) => {
-                layouts[idx as usize].clone()
+                Ok(layouts[idx as usize].clone())
             }
-            Err(_) => continue,
+            Err(_) => continue, // ignore non keyboard related events
         };
     };
 
-    Some(layout)
+    Some(Box::new(func))
+}
+
+fn layout_provider() -> LayoutFunc {
+    if let Some(niri_layout) = niri() {
+        return niri_layout;
+    };
+
+    if let Some(x11_layout) = x11() {
+        return x11_layout;
+    };
+
+    panic!("neither niri nor X11 with KBD found");
 }
 
 pub fn routine() -> impl crate::Routine {
     || {
         let mut notif = NotifWrapper::new();
-        let mut layout: Box<dyn FnMut() -> String>;
-
-        if let Some(niri_layout) = try_niri() {
-            layout = Box::new(niri_layout);
-        } else {
-            layout = Box::new(try_x11().expect("neither niri nor X11 with KBD found"));
-        };
+        let mut get_layout = layout_provider();
 
         loop {
+            if Config::get().keyboard.off {
+                dbg!("keyboard module disabled");
+                break;
+            }
+
+            let layout = match get_layout() {
+                Ok(layout) => layout,
+                Err(err) if matches!(err.kind(), ErrorKind::Interrupted) => continue,
+                Err(err) => panic!("{err:#?}"),
+            };
+
             notif
                 .timeout(2500)
                 .summary("Layout")
-                .body(&layout())
+                .body(&layout)
                 .icon("/usr/share/icons/Adwaita/symbolic/devices/input-keyboard-symbolic.svg");
             notif.show();
         }
