@@ -15,9 +15,6 @@ use std::rc::Rc;
 use zbus::blocking::connection;
 use zvariant;
 
-const DEFAULT_NOTIFICATION_TIMEOUT: i32 = 2500; // millis
-const BLUETOOTH_POLL_TIMEOUT: u64 = 30; // secs
-
 macro_rules! pa_info_eq {
     ($info1:ident, $info2:ident) => {
         ($info1.volume.avg().0 == $info2.volume.avg().0 && $info1.mute == $info2.mute)
@@ -211,12 +208,12 @@ impl NotifHelper {
         let mut low_battery = false;
         let config = Config::get();
         let config_sound = &config.sound;
-        let icon_path = config_sound.icon_path.as_ref().unwrap_or(&config.icon_path);
 
         self.notif
-            .timeout(DEFAULT_NOTIFICATION_TIMEOUT)
+            .timeout(config_sound.sink_notification_timeout)
             .summary("Sound")
             .body("Volume")
+            .icon(&config_sound.icon_path)
             .hint(Hint::CustomInt(
                 "value".into(),
                 pa_volume_to_percent(sink_info.volume.avg().0),
@@ -255,9 +252,11 @@ impl NotifHelper {
 
         if sink_info.mute {
             self.notif.summary.push_str(" muted");
-            self.notif.icon = format!("{icon_path}{}", config_sound.icon_sink_muted);
+            self.notif.icon += &config_sound.sink_muted_icon;
+        } else if poll_timeout.is_some() {
+            self.notif.icon += &config_sound.sink_bluetooth_icon;
         } else {
-            self.notif.icon = format!("{icon_path}{}", config_sound.icon_sink);
+            self.notif.icon += &config_sound.sink_icon;
         }
 
         if !only_low || low_battery {
@@ -268,14 +267,15 @@ impl NotifHelper {
     }
 
     fn show_source_notification(&mut self, source_info: &SourceInfo<'static>) {
+        let config = Config::get();
+        let config_sound = config.sound;
+
         self.notif
             .summary("Mic")
             .body("Volume")
             .urgency(Urgency::Normal)
-            .timeout(DEFAULT_NOTIFICATION_TIMEOUT)
-            .icon(
-                "/usr/share/icons/Adwaita/symbolic/status/microphone-sensitivity-high-symbolic.svg",
-            )
+            .timeout(config_sound.source_notification_timeout)
+            .icon(&config_sound.icon_path)
             .hint(Hint::CustomInt(
                 "value".into(),
                 pa_volume_to_percent(source_info.volume.avg().0),
@@ -283,9 +283,9 @@ impl NotifHelper {
 
         if source_info.mute {
             self.notif.summary.push_str(" muted");
-            self.notif.icon = String::from(
-                "/usr/share/icons/Adwaita/symbolic/status/microphone-disabled-symbolic.svg",
-            );
+            self.notif.icon += &config_sound.source_muted_icon;
+        } else {
+            self.notif.icon += &config_sound.source_icon;
         }
 
         self.notif.show();
@@ -304,7 +304,10 @@ pub fn routine() -> impl crate::Routine {
         let mut default_source = context_helper.get_default_source_info();
         let mut poll_timeout = notif_helper
             .bluetooth_battery(&context_helper.get_default_sink_info().proplist)
-            .map(|_| MicroSeconds::from_secs(BLUETOOTH_POLL_TIMEOUT).unwrap());
+            .map(|_| {
+                MicroSeconds::from_millis(Config::get().sound.sink_bluetooth_battery_poll_timeout)
+                    .unwrap()
+            });
 
         context_helper.subscribe();
 

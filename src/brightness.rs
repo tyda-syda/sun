@@ -50,7 +50,9 @@ pub fn routine() -> impl crate::Routine {
         let mut notif = NotifWrapper::new();
 
         loop {
-            if Config::get().brightness.off {
+            let brightness_config = Config::get().brightness;
+
+            if brightness_config.off {
                 dbg!("brightness module disabled");
                 break;
             }
@@ -64,12 +66,14 @@ pub fn routine() -> impl crate::Routine {
                     last_brightness = ev.get_brightness();
 
                     notif.summary("Brightness")
-                        .icon("/usr/share/icons/Adwaita/symbolic/status/display-brightness-symbolic.svg")
+                        .icon(&format!("{}{}", brightness_config.icon_path, brightness_config.icon))
                         .timeout(3000)
                         .hint(Hint::CustomInt("value".into(), last_brightness as i32));
                     notif.show();
                 }
-                Err(NetlinkError::IO(ErrorKind::Interrupted)) | Err(_) => (),
+                Err(NetlinkError::IO(ErrorKind::Interrupted))
+                | Err(NetlinkError::Serialize(_))
+                | Err(NetlinkError::Timeout) => (),
                 Err(NetlinkError::IO(kind)) => panic!("{kind:?}"),
             }
         }

@@ -185,7 +185,9 @@ pub fn routine() -> impl crate::Routine {
         let mut get_layout = layout_provider();
 
         loop {
-            if Config::get().keyboard.off {
+            let keyboard_config = Config::get().keyboard;
+
+            if keyboard_config.off {
                 dbg!("keyboard module disabled");
                 break;
             }
@@ -200,7 +202,7 @@ pub fn routine() -> impl crate::Routine {
                 .timeout(2500)
                 .summary("Layout")
                 .body(&layout)
-                .icon("/usr/share/icons/Adwaita/symbolic/devices/input-keyboard-symbolic.svg");
+                .icon(&format!("{}{}", keyboard_config.icon_path, keyboard_config.icon));
             notif.show();
         }
     }
