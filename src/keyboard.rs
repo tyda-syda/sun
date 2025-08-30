@@ -202,7 +202,10 @@ pub fn routine() -> impl crate::Routine {
                 .timeout(2500)
                 .summary("Layout")
                 .body(&layout)
-                .icon(&format!("{}{}", keyboard_config.icon_path, keyboard_config.icon));
+                .icon(&format!(
+                    "{}{}",
+                    keyboard_config.icon_path, keyboard_config.icon
+                ));
             notif.show();
         }
     }

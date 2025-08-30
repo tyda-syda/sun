@@ -1,5 +1,8 @@
+use crate::Message;
 use inotify::{EventMask, Inotify, WatchMask};
 use knuffel;
+use knuffel::errors::Error as KnuffelError;
+use std::io::ErrorKind;
 use std::sync::mpsc::SyncSender;
 use std::sync::RwLock;
 
@@ -20,8 +23,10 @@ const DEFAULT_BRIGHTNESS_ICON: &'static str = "status/display-brightness-symboli
 
 const DEFAULT_BATTERY_FULL_ICON: &'static str = "status/battery-level-100-charged-symbolic.svg";
 const DEFAULT_BATTERY_LOW_ICON: &'static str = "status/battery-caution-symbolic.svg";
-const DEFAULT_BATTERY_CHARGING_ICON: &'static str = "status/battery-level-{level}-charged-symbolic.svg";
-const DEFAULT_BATTERY_DISCHARGING_ICON: &'static str = "status/battery-level-{level}-charged-symbolic.svg";
+const DEFAULT_BATTERY_CHARGING_ICON: &'static str =
+    "status/battery-level-{level}-charged-symbolic.svg";
+const DEFAULT_BATTERY_DISCHARGING_ICON: &'static str =
+    "status/battery-level-{level}-charged-symbolic.svg";
 
 static CONFIG: RwLock<Option<Config>> = RwLock::new(None);
 
@@ -46,13 +51,15 @@ impl Config {
             .expect("config must be initialized before accessing it")
     }
 
-    pub fn update() {
-        let config = std::fs::read_to_string(CONFIG_FILE).unwrap();
+    pub fn update() -> Result<Self, KnuffelError> {
+        let config = knuffel::parse::<Config>(
+            CONFIG_FILE,
+            &std::fs::read_to_string(CONFIG_FILE).unwrap_or(String::new()),
+        )?;
 
-        match knuffel::parse(CONFIG_FILE, &config) {
-            Ok(parsed) => *CONFIG.write().unwrap() = Some(parsed),
-            Err(err) => println!("error while parsing {CONFIG_FILE}:\n{err:#?}"),
-        }
+        *CONFIG.write().unwrap() = Some(config.clone());
+
+        Ok(config)
     }
 }
 
@@ -124,7 +131,7 @@ pub struct Brightness {
     pub icon: String,
 }
 
-pub fn routine(sender: SyncSender<crate::Message>) -> impl crate::Routine {
+pub fn routine(sender: SyncSender<Message>) -> impl crate::Routine {
     move || {
         let mut inotify = Inotify::init().unwrap();
         let mut buf =
@@ -137,15 +144,18 @@ pub fn routine(sender: SyncSender<crate::Message>) -> impl crate::Routine {
 
         loop {
             for ev in inotify.read_events_blocking(&mut buf).unwrap() {
-                Config::update();
-
-                sender.send(crate::Message::ConfigReload).unwrap();
+                if let Err(err) = Config::update() {
+                    sender.send(Message::ConfigReloadError(err)).unwrap();
+                } else {
+                    sender.send(Message::ConfigReload).unwrap();
+                }
 
                 if ev.mask & EventMask::IGNORED == EventMask::IGNORED {
-                    inotify
-                        .watches()
-                        .add(CONFIG_FILE, WatchMask::MODIFY)
-                        .unwrap();
+                    match inotify.watches().add(CONFIG_FILE, WatchMask::MODIFY) {
+                        Err(err) if matches!(err.kind(), ErrorKind::NotFound) => (),
+                        Err(err) => panic!("inotify add watch error:\n{err:#?}"),
+                        _ => (),
+                    }
                 }
             }
         }

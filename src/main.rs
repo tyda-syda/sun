@@ -7,7 +7,10 @@ mod config;
 mod notif;
 mod sound;
 
-use notify_rust::Urgency;
+use crate::config::Config;
+use crate::notif::NotifWrapper;
+use knuffel::errors::Error as KnuffelError;
+use notify_rust::{Timeout, Urgency};
 use std::collections::HashMap;
 use std::os::unix::thread::JoinHandleExt;
 use std::process::exit;
@@ -30,6 +33,7 @@ pub enum Module {
 pub enum Message {
     ModulePanic(String),
     ConfigReload,
+    ConfigReloadError(KnuffelError),
 }
 
 extern "C" fn sa_action(_: libc::c_int) {
@@ -61,10 +65,9 @@ fn update_routine(
 }
 
 fn main() {
+    let mut config = Config::update().unwrap();
     let (sender, reciever) = std::sync::mpsc::sync_channel::<Message>(1);
     let hook_sender = sender.clone();
-
-    config::Config::update();
 
     std::panic::set_hook(Box::new(move |info| {
         let mut notif = notif::NotifWrapper::new();
@@ -115,7 +118,6 @@ fn main() {
     }
 
     let mut routines = HashMap::new();
-    let config = config::Config::get();
 
     if !config.sound.off {
         routines.insert(Module::Sound, spawn(sound::routine()));
@@ -138,7 +140,7 @@ fn main() {
     loop {
         match reciever.recv() {
             Ok(Message::ConfigReload) => {
-                let config = config::Config::get();
+                config = Config::get();
 
                 update_routine(
                     Module::Sound,
@@ -169,7 +171,17 @@ fn main() {
                 println!("{payload}");
                 break;
             }
-            Err(e) => panic!("mpsc reciever error: {e:#?}"),
+            Ok(Message::ConfigReloadError(err)) => {
+                NotifWrapper::new()
+                    .summary("Config parse error")
+                    .body("Check logs for details")
+                    .urgency(Urgency::Critical)
+                    .timeout(Timeout::Never)
+                    .show()
+                    .unwrap();
+                println!("config parse error:\n{err:#?}");
+            }
+            Err(e) => panic!("mpsc reciever error:\n{e:#?}"),
         }
     }
 }

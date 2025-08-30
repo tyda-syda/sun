@@ -114,9 +114,7 @@ pub fn routine() -> impl crate::Routine {
                 break;
             }
 
-            notif
-                .summary("Battery")
-                .icon(&config_battery.icon_path);
+            notif.summary("Battery").icon(&config_battery.icon_path);
 
             match handle.read_uevent_msec::<UeventPowerSupply, String>(poll_timeout) {
                 Ok(ev) => {
@@ -163,9 +161,7 @@ pub fn routine() -> impl crate::Routine {
                 Err(NetlinkError::Timeout) => {
                     let uevent = UeventPowerSupply::new().unwrap();
 
-                    notif
-                        .body(last_status.to_string().as_str())
-                        .timeout(0);
+                    notif.body(last_status.to_string().as_str()).timeout(0);
 
                     if !full && uevent.status == Status::Full {
                         full = true;

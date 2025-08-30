@@ -65,16 +65,19 @@ pub fn routine() -> impl crate::Routine {
 
                     last_brightness = ev.get_brightness();
 
-                    notif.summary("Brightness")
-                        .icon(&format!("{}{}", brightness_config.icon_path, brightness_config.icon))
+                    notif
+                        .summary("Brightness")
+                        .icon(&format!(
+                            "{}{}",
+                            brightness_config.icon_path, brightness_config.icon
+                        ))
                         .timeout(3000)
                         .hint(Hint::CustomInt("value".into(), last_brightness as i32));
                     notif.show();
                 }
-                Err(NetlinkError::IO(ErrorKind::Interrupted))
-                | Err(NetlinkError::Serialize(_))
-                | Err(NetlinkError::Timeout) => (),
+                Err(NetlinkError::IO(ErrorKind::Interrupted)) => (),
                 Err(NetlinkError::IO(kind)) => panic!("{kind:?}"),
+                Err(_) => (),
             }
         }
     }
