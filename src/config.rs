@@ -103,7 +103,7 @@ impl std::default::Default for Brightness {
     }
 }
 
-pub fn routine(sender: SyncSender<String>) -> impl crate::Routine {
+pub fn routine(sender: SyncSender<crate::Message>) -> impl crate::Routine {
     move || {
         let mut inotify = Inotify::init().unwrap();
         let mut buf =
@@ -118,7 +118,7 @@ pub fn routine(sender: SyncSender<String>) -> impl crate::Routine {
             for ev in inotify.read_events_blocking(&mut buf).unwrap() {
                 Config::update();
 
-                sender.send("cfg_update".into()).unwrap();
+                sender.send(crate::Message::ConfigReload).unwrap();
 
                 if ev.mask & EventMask::IGNORED == EventMask::IGNORED {
                     inotify

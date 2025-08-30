@@ -19,17 +19,30 @@ trait Routine: FnOnce() + Send + 'static {}
 
 impl<T: FnOnce() + Send + 'static> Routine for T {}
 
+#[derive(Eq, PartialEq, Hash)]
+pub enum Module {
+    Sound,
+    Battery,
+    Brightness,
+    Keyboard,
+}
+
+pub enum Message {
+    ModulePanic(String),
+    ConfigReload,
+}
+
 extern "C" fn sa_action(_: libc::c_int) {
     dbg!("sa_action");
 }
 
-fn update_routine<'a>(
-    name: &'a str,
-    routines: &mut HashMap<&'a str, JoinHandle<()>>,
+fn update_routine(
+    name: Module,
+    routines: &mut HashMap<Module, JoinHandle<()>>,
     off: bool,
-    routine: impl Routine + 'a,
+    routine: impl Routine,
 ) {
-    if let Some(handle) = routines.get_mut(name) {
+    if let Some(handle) = routines.get_mut(&name) {
         unsafe {
             if libc::pthread_kill(handle.as_pthread_t(), libc::SIGUSR1) != 0 {
                 println!("{}", errno_msg!("pthread_kill error"));
@@ -38,7 +51,7 @@ fn update_routine<'a>(
         }
 
         if off {
-            routines.remove(name).unwrap().join().unwrap();
+            routines.remove(&name).unwrap().join().unwrap();
         }
     } else {
         if !off {
@@ -48,7 +61,7 @@ fn update_routine<'a>(
 }
 
 fn main() {
-    let (sender, reciever) = std::sync::mpsc::sync_channel::<String>(1);
+    let (sender, reciever) = std::sync::mpsc::sync_channel::<Message>(1);
     let hook_sender = sender.clone();
 
     config::Config::update();
@@ -57,11 +70,11 @@ fn main() {
         let mut notif = notif::NotifWrapper::new();
         let payload = info.payload();
         let try_send = |p| {
-            if let Err(e) = hook_sender.send(format!(
+            if let Err(e) = hook_sender.send(Message::ModulePanic(format!(
                 "panic at '{}' - {p}\n{}",
                 info.location().unwrap(), // blindly believing in rust docs that it won't ever panic
                 std::backtrace::Backtrace::force_capture()
-            )) {
+            ))) {
                 println!("mpsc sender error: {e:?}\npayload: {p}");
                 exit(-1);
             };
@@ -105,56 +118,58 @@ fn main() {
     let config = config::Config::get();
 
     if !config.sound.off {
-        routines.insert("sound", spawn(sound::routine()));
+        routines.insert(Module::Sound, spawn(sound::routine()));
     }
 
     if !config.battery.off {
-        routines.insert("battery", spawn(battery::routine()));
+        routines.insert(Module::Battery, spawn(battery::routine()));
     }
 
     if !config.keyboard.off {
-        routines.insert("keyboard", spawn(keyboard::routine()));
+        routines.insert(Module::Keyboard, spawn(keyboard::routine()));
     }
 
     if !config.brightness.off {
-        routines.insert("brightness", spawn(brightness::routine()));
+        routines.insert(Module::Brightness, spawn(brightness::routine()));
     }
 
     spawn(config::routine(sender));
 
     loop {
         match reciever.recv() {
-            Ok(v) if v == "cfg_update" => {
+            Ok(Message::ConfigReload) => {
                 let config = config::Config::get();
 
-                update_routine("sound", &mut routines, config.sound.off, sound::routine());
                 update_routine(
-                    "battery",
+                    Module::Sound,
+                    &mut routines,
+                    config.sound.off,
+                    sound::routine(),
+                );
+                update_routine(
+                    Module::Battery,
                     &mut routines,
                     config.battery.off,
                     battery::routine(),
                 );
                 update_routine(
-                    "keyboard",
+                    Module::Keyboard,
                     &mut routines,
                     config.keyboard.off,
                     keyboard::routine(),
                 );
                 update_routine(
-                    "brightness",
+                    Module::Brightness,
                     &mut routines,
                     config.brightness.off,
                     brightness::routine(),
                 );
             }
-            Ok(v) => {
-                println!("{v}");
+            Ok(Message::ModulePanic(payload)) => {
+                println!("{payload}");
                 break;
             }
-            Err(e) => {
-                println!("mpsc reciever error: {e:?}");
-                break;
-            }
+            Err(e) => panic!("mpsc reciever error: {e:#?}"),
         }
     }
 }
