@@ -14,8 +14,8 @@ use notify_rust::{Timeout, Urgency};
 use std::collections::HashMap;
 use std::os::unix::thread::JoinHandleExt;
 use std::process::exit;
+use std::sync::mpsc::Sender;
 use std::thread::{spawn, JoinHandle};
-use std::sync::mpsc::SyncSender;
 
 // workaround for type aliases, example:
 // type Routine = impl FnOnce() + Send + 'static - won't compile
@@ -41,7 +41,7 @@ extern "C" fn sa_action(_: libc::c_int) {
     dbg!("sa_action");
 }
 
-fn setup_sigaction(sender: SyncSender<Message>) {
+fn setup_sigaction(sender: Sender<Message>) {
     unsafe {
         let mut action = std::mem::zeroed::<libc::sigaction>();
 
@@ -116,34 +116,12 @@ fn update_routine(
 }
 
 fn main() {
-    let config = Config::update().unwrap();
-    let (sender, reciever) = std::sync::mpsc::sync_channel::<Message>(1);
+    let (sender, reciever) = std::sync::mpsc::channel::<Message>();
     let mut routines = HashMap::new();
 
-    update_routine(
-        Module::Sound,
-        &mut routines,
-        config.sound.off,
-        sound::routine(),
-    );
-    update_routine(
-        Module::Battery,
-        &mut routines,
-        config.battery.off,
-        battery::routine(),
-    );
-    update_routine(
-        Module::Keyboard,
-        &mut routines,
-        config.keyboard.off,
-        keyboard::routine(),
-    );
-    update_routine(
-        Module::Brightness,
-        &mut routines,
-        config.brightness.off,
-        brightness::routine(),
-    );
+    sender
+        .send(Message::ConfigReload(Config::update().unwrap()))
+        .unwrap();
 
     spawn(config::routine(sender.clone()));
 

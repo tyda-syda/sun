@@ -3,7 +3,7 @@ use inotify::{EventMask, Inotify, WatchMask};
 use knuffel;
 use knuffel::errors::Error as KnuffelError;
 use std::io::ErrorKind;
-use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::Sender;
 use std::sync::RwLock;
 
 const CONFIG_FILE: &'static str = "config.kdl";
@@ -25,8 +25,7 @@ const DEFAULT_BATTERY_FULL_ICON: &'static str = "status/battery-level-100-charge
 const DEFAULT_BATTERY_LOW_ICON: &'static str = "status/battery-caution-symbolic.svg";
 const DEFAULT_BATTERY_CHARGING_ICON: &'static str =
     "status/battery-level-{level}-charging-symbolic.svg";
-const DEFAULT_BATTERY_DISCHARGING_ICON: &'static str =
-    "status/battery-level-{level}-symbolic.svg";
+const DEFAULT_BATTERY_DISCHARGING_ICON: &'static str = "status/battery-level-{level}-symbolic.svg";
 
 static CONFIG: RwLock<Option<Config>> = RwLock::new(None);
 
@@ -131,7 +130,7 @@ pub struct Brightness {
     pub icon: String,
 }
 
-pub fn routine(sender: SyncSender<Message>) -> impl crate::Routine {
+pub fn routine(sender: Sender<Message>) -> impl crate::Routine {
     move || {
         let mut inotify = Inotify::init().unwrap();
         let mut buf =
