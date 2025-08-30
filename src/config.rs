@@ -24,9 +24,9 @@ const DEFAULT_BRIGHTNESS_ICON: &'static str = "status/display-brightness-symboli
 const DEFAULT_BATTERY_FULL_ICON: &'static str = "status/battery-level-100-charged-symbolic.svg";
 const DEFAULT_BATTERY_LOW_ICON: &'static str = "status/battery-caution-symbolic.svg";
 const DEFAULT_BATTERY_CHARGING_ICON: &'static str =
-    "status/battery-level-{level}-charged-symbolic.svg";
+    "status/battery-level-{level}-charging-symbolic.svg";
 const DEFAULT_BATTERY_DISCHARGING_ICON: &'static str =
-    "status/battery-level-{level}-charged-symbolic.svg";
+    "status/battery-level-{level}-symbolic.svg";
 
 static CONFIG: RwLock<Option<Config>> = RwLock::new(None);
 
@@ -144,10 +144,9 @@ pub fn routine(sender: SyncSender<Message>) -> impl crate::Routine {
 
         loop {
             for ev in inotify.read_events_blocking(&mut buf).unwrap() {
-                if let Err(err) = Config::update() {
-                    sender.send(Message::ConfigReloadError(err)).unwrap();
-                } else {
-                    sender.send(Message::ConfigReload).unwrap();
+                match Config::update() {
+                    Ok(config) => sender.send(Message::ConfigReload(config)).unwrap(),
+                    Err(err) => sender.send(Message::ConfigReloadError(err)).unwrap(),
                 }
 
                 if ev.mask & EventMask::IGNORED == EventMask::IGNORED {
