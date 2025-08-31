@@ -59,6 +59,7 @@ fn setup_sigaction(sender: Sender<Message>) {
 
     std::panic::set_hook(Box::new(move |info| {
         let mut notif = notif::NotifWrapper::new();
+        let config = Config::get();
         let payload = info.payload();
         let try_send = |p| {
             if let Err(err) = sender.send(Message::ModulePanic(format!(
@@ -76,7 +77,7 @@ fn setup_sigaction(sender: Sender<Message>) {
             .urgency(Urgency::Critical)
             .summary("SUN just died")
             .body("Checks logs for details")
-            .icon("/usr/share/icons/Adwaita/symbolic/status/computer-fail-symbolic.svg");
+            .icon(&config.error_icon);
         notif.show();
 
         if payload.is::<String>() {
@@ -122,9 +123,9 @@ fn main() {
         .send(Message::ConfigReload(Config::update().unwrap()))
         .unwrap();
 
-    spawn(config::routine(sender.clone()));
+    setup_sigaction(sender.clone());
 
-    setup_sigaction(sender);
+    spawn(config::routine(sender));
 
     loop {
         match reciever.recv() {
@@ -156,10 +157,11 @@ fn main() {
             }
             Ok(Message::ConfigReloadError(err)) => {
                 NotifWrapper::new()
-                    .summary("Config parse error")
+                    .summary("SUN failed to parse config")
                     .body("Check logs for details")
                     .urgency(Urgency::Critical)
                     .timeout(Timeout::Never)
+                    .icon(&Config::get().error_icon)
                     .show()
                     .unwrap();
                 println!("config parse error:\n{err:#?}");

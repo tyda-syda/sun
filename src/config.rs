@@ -9,6 +9,7 @@ use std::sync::RwLock;
 const CONFIG_FILE: &'static str = "config.kdl";
 
 const DEFAULT_ICON_PATH: &'static str = "/usr/share/icons/Adwaita/symbolic/";
+const DEFAULT_ERROR_ICON: &'static str = "/usr/share/icons/Adwaita/symbolic/status/computer-fail-symbolic.svg";
 
 const DEFAULT_SINK_ICON: &'static str = "status/audio-volume-high-symbolic.svg";
 const DEFAULT_SINK_MUTED_ICON: &'static str = "status/audio-volume-muted-symbolic.svg";
@@ -31,6 +32,8 @@ static CONFIG: RwLock<Option<Config>> = RwLock::new(None);
 
 #[derive(knuffel::Decode, Clone, Debug)]
 pub struct Config {
+    #[knuffel(child, unwrap(argument), default = DEFAULT_ERROR_ICON.into())]
+    pub error_icon: String,
     #[knuffel(child, default)]
     pub sound: Sound,
     #[knuffel(child, default)]
@@ -66,6 +69,10 @@ impl Config {
 pub struct Battery {
     #[knuffel(child)]
     pub off: bool,
+    #[knuffel(child, unwrap(argument), default = 15 * 1000)]
+    pub poll_timeout: i32,
+    #[knuffel(child, unwrap(argument), default = 15)]
+    pub warn_at: u8,
     #[knuffel(child, unwrap(argument), default = DEFAULT_ICON_PATH.into())]
     pub icon_path: String,
     #[knuffel(child, unwrap(argument), default = DEFAULT_BATTERY_FULL_ICON.into())]

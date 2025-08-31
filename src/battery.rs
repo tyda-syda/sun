@@ -7,8 +7,6 @@ use std::fs;
 use std::io::ErrorKind;
 use std::str::FromStr;
 
-const BATTERY_POLL_TIMEOUT: i32 = 15 * 1000; // msec
-const BATTERY_WARN_AT: u8 = 15;
 const SYS_PATH: &'static str = "/sys/class/power_supply/BAT0/uevent";
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -103,7 +101,7 @@ pub fn routine() -> impl crate::Routine {
         let mut handle = NetlinkHandle::new().unwrap();
         let mut notif = NotifWrapper::new();
         let mut last_status = UeventPowerSupply::new().unwrap().status;
-        let mut poll_timeout = BATTERY_POLL_TIMEOUT;
+        let mut poll_timeout = Config::get().battery.poll_timeout;
         let mut full = false;
 
         loop {
@@ -122,7 +120,7 @@ pub fn routine() -> impl crate::Routine {
                     }
 
                     full = false;
-                    poll_timeout = BATTERY_POLL_TIMEOUT;
+                    poll_timeout = config_battery.poll_timeout;
                     last_status = ev.status;
 
                     notif.hints.clear(); // prevents from setting multiple urgencies
@@ -176,7 +174,7 @@ pub fn routine() -> impl crate::Routine {
 
                     let cap = uevent.capacity;
 
-                    if uevent.status == Status::Discharging && cap <= BATTERY_WARN_AT {
+                    if uevent.status == Status::Discharging && cap <= config_battery.warn_at {
                         notif.urgency(Urgency::Critical);
                         notif.body(format!("{cap}% left, connect charger").as_str());
                         notif.icon += &config_battery.low_icon;

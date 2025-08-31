@@ -267,8 +267,7 @@ impl NotifHelper {
     }
 
     fn show_source_notification(&mut self, source_info: &SourceInfo<'static>) {
-        let config = Config::get();
-        let config_sound = config.sound;
+        let config_sound = Config::get().sound;
 
         self.notif
             .summary("Mic")
