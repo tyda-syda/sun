@@ -1,7 +1,9 @@
+use crate::config::Config;
 use crate::netlink::utils as ev_utils;
 use crate::netlink::{NetlinkError, NetlinkHandle, Uevent};
 use crate::notif::NotifWrapper;
 use notify_rust::Hint;
+use std::io::ErrorKind;
 use std::str::FromStr;
 
 struct UeventBacklight {
@@ -48,6 +50,12 @@ pub fn routine() -> impl crate::Routine {
         let mut notif = NotifWrapper::new();
 
         loop {
+            let brightness_config = Config::get().brightness;
+
+            if brightness_config.off {
+                break;
+            }
+
             match handle.read_uevent::<UeventBacklight, String>() {
                 Ok(ev) => {
                     if last_brightness == ev.get_brightness() {
@@ -56,12 +64,17 @@ pub fn routine() -> impl crate::Routine {
 
                     last_brightness = ev.get_brightness();
 
-                    notif.summary("Brightness")
-                        .icon("/usr/share/icons/Adwaita/symbolic/status/display-brightness-symbolic.svg")
+                    notif
+                        .summary("Brightness")
+                        .icon(&format!(
+                            "{}{}",
+                            brightness_config.icon_path, brightness_config.icon
+                        ))
                         .timeout(3000)
                         .hint(Hint::CustomInt("value".into(), last_brightness as i32));
                     notif.show();
                 }
+                Err(NetlinkError::IO(ErrorKind::Interrupted)) => (),
                 Err(NetlinkError::IO(kind)) => panic!("{kind:?}"),
                 Err(_) => (),
             }

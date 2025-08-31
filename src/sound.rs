@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::notif::NotifWrapper;
 use libpulse_binding as pa;
 use notify_rust::{Hint, Timeout, Urgency};
@@ -13,10 +14,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use zbus::blocking::connection;
 use zvariant;
-
-const DEFAULT_NOTIFICATION_TIMEOUT: i32 = 2500; // millis
-const BLUETOOTH_POLL_TIMEOUT: u64 = 30; // secs
-const BLUETOOTH_BATTERY_WARN_AT: u8 = 15;
 
 macro_rules! pa_info_eq {
     ($info1:ident, $info2:ident) => {
@@ -209,17 +206,18 @@ impl NotifHelper {
     ) -> Option<MicroSeconds> {
         let mut poll_timeout = None;
         let mut low_battery = false;
+        let config = Config::get();
+        let config_sound = &config.sound;
 
         self.notif
-            .urgency(Urgency::Normal)
-            .timeout(DEFAULT_NOTIFICATION_TIMEOUT)
+            .timeout(config_sound.sink_notification_timeout)
             .summary("Sound")
             .body("Volume")
+            .icon(&config_sound.icon_path)
             .hint(Hint::CustomInt(
                 "value".into(),
                 pa_volume_to_percent(sink_info.volume.avg().0),
-            ))
-            .icon("/usr/share/icons/Adwaita/symbolic/status/audio-volume-high-symbolic.svg");
+            ));
 
         if let Some(bus) = sink_info.proplist.get_str("device.bus") {
             if bus == "bluetooth" {
@@ -229,12 +227,20 @@ impl NotifHelper {
 
         // we can receive new device event before it can register its battery in dbus
         if let Some(battery) = self.bluetooth_battery(&sink_info.proplist) {
-            poll_timeout = Some(MicroSeconds::from_secs(BLUETOOTH_POLL_TIMEOUT).unwrap());
+            poll_timeout = Some(
+                MicroSeconds::from_secs(config_sound.sink_bluetooth_battery_poll_timeout).unwrap(),
+            );
 
-            if battery <= BLUETOOTH_BATTERY_WARN_AT {
+            if battery <= config_sound.sink_bluetooth_low_battery_warn_at {
+                let timeout = config_sound.sink_bluetooth_low_battery_timeout;
                 low_battery = true;
 
-                self.notif.timeout = Timeout::Never;
+                self.notif.timeout = if timeout < 0 {
+                    Timeout::Never
+                } else {
+                    Timeout::Milliseconds(timeout as u32)
+                };
+
                 self.notif.urgency(Urgency::Critical);
                 self.notif
                     .body
@@ -246,9 +252,11 @@ impl NotifHelper {
 
         if sink_info.mute {
             self.notif.summary.push_str(" muted");
-            self.notif.icon = String::from(
-                "/usr/share/icons/Adwaita/symbolic/status/audio-volume-muted-symbolic.svg",
-            );
+            self.notif.icon += &config_sound.sink_muted_icon;
+        } else if poll_timeout.is_some() {
+            self.notif.icon += &config_sound.sink_bluetooth_icon;
+        } else {
+            self.notif.icon += &config_sound.sink_icon;
         }
 
         if !only_low || low_battery {
@@ -259,14 +267,14 @@ impl NotifHelper {
     }
 
     fn show_source_notification(&mut self, source_info: &SourceInfo<'static>) {
+        let config_sound = Config::get().sound;
+
         self.notif
             .summary("Mic")
             .body("Volume")
             .urgency(Urgency::Normal)
-            .timeout(DEFAULT_NOTIFICATION_TIMEOUT)
-            .icon(
-                "/usr/share/icons/Adwaita/symbolic/status/microphone-sensitivity-high-symbolic.svg",
-            )
+            .timeout(config_sound.source_notification_timeout)
+            .icon(&config_sound.icon_path)
             .hint(Hint::CustomInt(
                 "value".into(),
                 pa_volume_to_percent(source_info.volume.avg().0),
@@ -274,9 +282,9 @@ impl NotifHelper {
 
         if source_info.mute {
             self.notif.summary.push_str(" muted");
-            self.notif.icon = String::from(
-                "/usr/share/icons/Adwaita/symbolic/status/microphone-disabled-symbolic.svg",
-            );
+            self.notif.icon += &config_sound.source_muted_icon;
+        } else {
+            self.notif.icon += &config_sound.source_icon;
         }
 
         self.notif.show();
@@ -295,11 +303,20 @@ pub fn routine() -> impl crate::Routine {
         let mut default_source = context_helper.get_default_source_info();
         let mut poll_timeout = notif_helper
             .bluetooth_battery(&context_helper.get_default_sink_info().proplist)
-            .map(|_| MicroSeconds::from_secs(BLUETOOTH_POLL_TIMEOUT).unwrap());
+            .map(|_| {
+                MicroSeconds::from_millis(Config::get().sound.sink_bluetooth_battery_poll_timeout)
+                    .unwrap()
+            });
 
         context_helper.subscribe();
 
         loop {
+            if Config::get().sound.off {
+                context_helper.main_loop.quit(pa::def::Retval(0));
+                context_helper.context.disconnect();
+                break;
+            }
+
             match context_helper.poll_events(poll_timeout) {
                 PollResult::Data(events) => {
                     for event in events {
@@ -322,16 +339,18 @@ pub fn routine() -> impl crate::Routine {
                                     context_helper.get_default_source_info();
 
                                 // skip if default microphone was changed
-                                if current_default_source.index != default_source.index
-                                    || pa_info_eq!(current_default_source, default_source)
-                                {
+                                if current_default_source.index != default_source.index {
                                     default_source = current_default_source;
+                                    continue;
+                                }
+
+                                if pa_info_eq!(current_default_source, default_source) {
                                     continue;
                                 }
 
                                 notif_helper.show_source_notification(&default_source);
                             }
-                            _ => continue,
+                            _ => (),
                         }
                     }
                 }
