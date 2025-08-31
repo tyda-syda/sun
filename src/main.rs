@@ -37,8 +37,7 @@ pub enum Message {
     ConfigReloadError(KnuffelError),
 }
 
-extern "C" fn sa_action(_: libc::c_int) {
-}
+extern "C" fn sa_action(_: libc::c_int) {}
 
 fn setup_sigaction(sender: Sender<Message>) {
     unsafe {

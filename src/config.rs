@@ -9,7 +9,8 @@ use std::sync::RwLock;
 const CONFIG_FILE: &'static str = "config.kdl";
 
 const DEFAULT_ICON_PATH: &'static str = "/usr/share/icons/Adwaita/symbolic/";
-const DEFAULT_ERROR_ICON: &'static str = "/usr/share/icons/Adwaita/symbolic/status/computer-fail-symbolic.svg";
+const DEFAULT_ERROR_ICON: &'static str =
+    "/usr/share/icons/Adwaita/symbolic/status/computer-fail-symbolic.svg";
 
 const DEFAULT_SINK_ICON: &'static str = "status/audio-volume-high-symbolic.svg";
 const DEFAULT_SINK_MUTED_ICON: &'static str = "status/audio-volume-muted-symbolic.svg";
@@ -22,6 +23,7 @@ const DEFAULT_KEYBOARD_ICON: &'static str = "devices/input-keyboard-symbolic.svg
 
 const DEFAULT_BRIGHTNESS_ICON: &'static str = "status/display-brightness-symbolic.svg";
 
+const DEFAULT_BATTERY_TARGET: &'static str = "BAT0";
 const DEFAULT_BATTERY_FULL_ICON: &'static str = "status/battery-level-100-charged-symbolic.svg";
 const DEFAULT_BATTERY_LOW_ICON: &'static str = "status/battery-caution-symbolic.svg";
 const DEFAULT_BATTERY_CHARGING_ICON: &'static str =
@@ -69,6 +71,8 @@ impl Config {
 pub struct Battery {
     #[knuffel(child)]
     pub off: bool,
+    #[knuffel(child, unwrap(argument), default = DEFAULT_BATTERY_TARGET.into())]
+    pub target: String,
     #[knuffel(child, unwrap(argument), default = 15 * 1000)]
     pub poll_timeout: i32,
     #[knuffel(child, unwrap(argument), default = 15)]

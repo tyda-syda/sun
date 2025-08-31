@@ -7,7 +7,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::str::FromStr;
 
-const SYS_PATH: &'static str = "/sys/class/power_supply/BAT0/uevent";
+const SYS_PATH: &'static str = "/sys/class/power_supply/{name}/uevent";
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum Status {
@@ -24,7 +24,9 @@ struct UeventPowerSupply {
 
 impl UeventPowerSupply {
     pub fn new() -> Result<Self, String> {
-        let uevent_str = fs::read_to_string(SYS_PATH).map_err(|e| e.to_string())?;
+        let uevent_str =
+            fs::read_to_string(SYS_PATH.replace("{name}", &Config::get().battery.target))
+                .map_err(|e| e.to_string())?;
         let status = ev_utils::get_element_val(&uevent_str, "POWER_SUPPLY_STATUS")
             .ok_or("POWER_SUPPLY_STATUS missing".to_owned())?
             .into();
@@ -61,6 +63,8 @@ impl Uevent<String> for UeventPowerSupply {
             return Err("non power_supply".into());
         }
 
+        // from netlink we only receive notification that battery has changed
+        // all info we will read from sysfs
         Self::new()
     }
 }
