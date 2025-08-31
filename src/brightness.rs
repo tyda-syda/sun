@@ -53,7 +53,6 @@ pub fn routine() -> impl crate::Routine {
             let brightness_config = Config::get().brightness;
 
             if brightness_config.off {
-                dbg!("brightness module disabled");
                 break;
             }
 

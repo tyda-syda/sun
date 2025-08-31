@@ -188,7 +188,6 @@ pub fn routine() -> impl crate::Routine {
             let keyboard_config = Config::get().keyboard;
 
             if keyboard_config.off {
-                dbg!("keyboard module disabled");
                 break;
             }
 

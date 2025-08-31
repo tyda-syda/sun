@@ -38,7 +38,6 @@ pub enum Message {
 }
 
 extern "C" fn sa_action(_: libc::c_int) {
-    dbg!("sa_action");
 }
 
 fn setup_sigaction(sender: Sender<Message>) {
@@ -54,7 +53,7 @@ fn setup_sigaction(sender: Sender<Message>) {
             std::ptr::null_mut(),
         ) == -1
         {
-            panic!("sigaction err");
+            panic!("{}", errno_msg!("sigaction error"));
         }
     }
 
@@ -62,12 +61,12 @@ fn setup_sigaction(sender: Sender<Message>) {
         let mut notif = notif::NotifWrapper::new();
         let payload = info.payload();
         let try_send = |p| {
-            if let Err(e) = sender.send(Message::ModulePanic(format!(
+            if let Err(err) = sender.send(Message::ModulePanic(format!(
                 "panic at '{}' - {p}\n{}",
                 info.location().unwrap(), // blindly believing in rust docs that it won't ever panic
                 std::backtrace::Backtrace::force_capture()
             ))) {
-                println!("mpsc sender error: {e:?}\npayload: {p}");
+                println!("mpsc sender error: {err:#?}\npayload: {p}");
                 exit(-1);
             };
         };
@@ -169,7 +168,7 @@ fn main() {
                 println!("{payload}");
                 break;
             }
-            Err(e) => panic!("mpsc reciever error:\n{e:#?}"),
+            Err(err) => panic!("mpsc reciever error:\n{err:#?}"),
         }
     }
 }

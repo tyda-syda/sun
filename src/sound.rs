@@ -315,7 +315,6 @@ pub fn routine() -> impl crate::Routine {
             if Config::get().sound.off {
                 context_helper.main_loop.quit(pa::def::Retval(0));
                 context_helper.context.disconnect();
-                dbg!("sound module disabled");
                 break;
             }
 

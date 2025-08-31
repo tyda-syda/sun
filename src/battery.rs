@@ -110,7 +110,6 @@ pub fn routine() -> impl crate::Routine {
             let config_battery = Config::get().battery;
 
             if config_battery.off {
-                dbg!("battery module disabled");
                 break;
             }
 
