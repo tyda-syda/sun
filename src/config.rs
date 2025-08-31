@@ -56,7 +56,7 @@ impl Config {
     pub fn update() -> Result<Self, KnuffelError> {
         let config = knuffel::parse::<Config>(
             CONFIG_FILE,
-            &std::fs::read_to_string(CONFIG_FILE).unwrap_or(String::new()),
+            &std::fs::read_to_string(CONFIG_FILE).unwrap_or(include_str!("../config.kdl").into()),
         )?;
 
         *CONFIG.write().unwrap() = Some(config.clone());
