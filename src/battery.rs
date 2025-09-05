@@ -149,7 +149,11 @@ pub fn routine() -> impl crate::Routine {
                                 config_battery.charging_icon
                             }
                         }
-                        Status::Full => config_battery.full_icon,
+                        Status::Full => {
+                            full = true;
+                            poll_timeout = -1; // wait for uevent, no need to poll for now
+                            config_battery.full_icon
+                        }
                         Status::Unknown(ref status) => {
                             println!("unknown battery status: {status}");
                             continue;
