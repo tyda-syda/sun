@@ -15,9 +15,12 @@ use std::rc::Rc;
 use zbus::blocking::connection;
 use zvariant;
 
+// workaround for trait impl on external types error
 macro_rules! pa_info_eq {
     ($info1:ident, $info2:ident) => {
-        ($info1.volume.avg().0 == $info2.volume.avg().0 && $info1.mute == $info2.mute)
+        ($info1.index == $info2.index
+            && $info1.volume.avg().0 == $info2.volume.avg().0
+            && $info1.mute == $info2.mute)
     };
 }
 
@@ -39,7 +42,8 @@ struct ContextHelper {
 
 struct NotifHelper {
     zbus: zbus::blocking::Connection,
-    notif: NotifWrapper,
+    sink_notif: NotifWrapper,
+    source_notif: NotifWrapper,
 }
 
 impl ContextHelper {
@@ -176,7 +180,8 @@ impl NotifHelper {
     fn new() -> Self {
         Self {
             zbus: connection::Connection::system().unwrap(),
-            notif: NotifWrapper::new(),
+            sink_notif: NotifWrapper::new(),
+            source_notif: NotifWrapper::new(),
         }
     }
 
@@ -209,7 +214,7 @@ impl NotifHelper {
         let config = Config::get();
         let config_sound = &config.sound;
 
-        self.notif
+        self.sink_notif
             .timeout(config_sound.sink_notification_timeout)
             .summary("Sound")
             .body("Volume")
@@ -221,7 +226,7 @@ impl NotifHelper {
 
         if let Some(bus) = sink_info.proplist.get_str("device.bus") {
             if bus == "bluetooth" {
-                self.notif.body = sink_info.description.clone().unwrap().to_string();
+                self.sink_notif.body = sink_info.description.clone().unwrap().to_string();
             }
         }
 
@@ -235,32 +240,32 @@ impl NotifHelper {
                 let timeout = config_sound.sink_bluetooth_low_battery_timeout;
                 low_battery = true;
 
-                self.notif.timeout = if timeout < 0 {
+                self.sink_notif.timeout = if timeout < 0 {
                     Timeout::Never
                 } else {
                     Timeout::Milliseconds(timeout as u32)
                 };
 
-                self.notif.urgency(Urgency::Critical);
-                self.notif
+                self.sink_notif.urgency(Urgency::Critical);
+                self.sink_notif
                     .body
                     .push_str(&format!(" ({}%) Low battery", battery));
             } else {
-                self.notif.body.push_str(&format!(" ({}%)", battery));
+                self.sink_notif.body.push_str(&format!(" ({}%)", battery));
             }
         };
 
         if sink_info.mute {
-            self.notif.summary.push_str(" muted");
-            self.notif.icon += &config_sound.sink_muted_icon;
+            self.sink_notif.summary.push_str(" muted");
+            self.sink_notif.icon += &config_sound.sink_muted_icon;
         } else if poll_timeout.is_some() {
-            self.notif.icon += &config_sound.sink_bluetooth_icon;
+            self.sink_notif.icon += &config_sound.sink_bluetooth_icon;
         } else {
-            self.notif.icon += &config_sound.sink_icon;
+            self.sink_notif.icon += &config_sound.sink_icon;
         }
 
         if !only_low || low_battery {
-            self.notif.show();
+            self.sink_notif.show();
         }
 
         poll_timeout
@@ -269,7 +274,7 @@ impl NotifHelper {
     fn show_source_notification(&mut self, source_info: &SourceInfo<'static>) {
         let config_sound = Config::get().sound;
 
-        self.notif
+        self.source_notif
             .summary("Mic")
             .body("Volume")
             .urgency(Urgency::Normal)
@@ -281,13 +286,13 @@ impl NotifHelper {
             ));
 
         if source_info.mute {
-            self.notif.summary.push_str(" muted");
-            self.notif.icon += &config_sound.source_muted_icon;
+            self.source_notif.summary.push_str(" muted");
+            self.source_notif.icon += &config_sound.source_muted_icon;
         } else {
-            self.notif.icon += &config_sound.source_icon;
+            self.source_notif.icon += &config_sound.source_icon;
         }
 
-        self.notif.show();
+        self.source_notif.show();
     }
 }
 
@@ -324,9 +329,7 @@ pub fn routine() -> impl crate::Routine {
                             Facility::Sink => {
                                 let current_default_sink = context_helper.get_default_sink_info();
 
-                                if current_default_sink.index == default_sink.index
-                                    && pa_info_eq!(current_default_sink, default_sink)
-                                {
+                                if pa_info_eq!(current_default_sink, default_sink) {
                                     continue;
                                 }
 
@@ -338,16 +341,11 @@ pub fn routine() -> impl crate::Routine {
                                 let current_default_source =
                                     context_helper.get_default_source_info();
 
-                                // skip if default microphone was changed
-                                if current_default_source.index != default_source.index {
-                                    default_source = current_default_source;
-                                    continue;
-                                }
-
                                 if pa_info_eq!(current_default_source, default_source) {
                                     continue;
                                 }
 
+                                default_source = current_default_source;
                                 notif_helper.show_source_notification(&default_source);
                             }
                             _ => (),

@@ -16,8 +16,8 @@ const DEFAULT_SINK_ICON: &'static str = "status/audio-volume-high-symbolic.svg";
 const DEFAULT_SINK_MUTED_ICON: &'static str = "status/audio-volume-muted-symbolic.svg";
 const DEFAULT_SINK_BLUETOOTH_ICON: &'static str = "status/audio-volume-high-symbolic.svg";
 
-const DEFAULT_SOURCE_ICON: &'static str = "status/microphone-sensetivity-high-symbolic.svg";
-const DEFAULT_SOURCE_MUTED_ICON: &'static str = "status/microphone-sensetivity-muted-symbolic.svg";
+const DEFAULT_SOURCE_ICON: &'static str = "status/microphone-sensitivity-high-symbolic.svg";
+const DEFAULT_SOURCE_MUTED_ICON: &'static str = "status/microphone-sensitivity-muted-symbolic.svg";
 
 const DEFAULT_KEYBOARD_ICON: &'static str = "devices/input-keyboard-symbolic.svg";
 
