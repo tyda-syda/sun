@@ -139,6 +139,8 @@ pub struct Brightness {
     pub icon_path: String,
     #[knuffel(child, unwrap(argument), default = DEFAULT_BRIGHTNESS_ICON.into())]
     pub icon: String,
+    #[knuffel(child, unwrap(argument))]
+    pub target: Option<String>,
 }
 
 pub fn routine(sender: Sender<Message>) -> impl crate::Routine {

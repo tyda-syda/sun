@@ -21,7 +21,7 @@ impl Uevent<String> for UeventBacklight {
 
         Ok(Self {
             devpath: ev_utils::get_element_val(&uevent_str, "@")
-                .ok_or(String::from("devpath not found"))?,
+                .ok_or("devpath not found".to_owned())?,
         })
     }
 }
@@ -60,6 +60,12 @@ pub fn routine() -> impl crate::Routine {
                 Ok(ev) => {
                     if last_brightness == ev.get_brightness() {
                         continue;
+                    }
+
+                    if let Some(ref target) = brightness_config.target {
+                        if ev.devpath.rsplit_once("/").unwrap().1 != target {
+                            continue;
+                        }
                     }
 
                     last_brightness = ev.get_brightness();
