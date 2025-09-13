@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::notif::{Hint, Notification, Timeout, Urgency};
+use crate::notif::{CloseReason, Hint, Notification, Timeout, Urgency};
 use libpulse_binding as pa;
 use pa::callbacks::ListResult;
 use pa::context::introspect::{SinkInfo, SourceInfo};
@@ -210,9 +210,9 @@ impl NotifHelper {
         only_low: bool,
     ) -> Option<MicroSeconds> {
         static NOTIF_CLOSED: AtomicBool = AtomicBool::new(false);
+        static LOW_BATTERY: AtomicBool = AtomicBool::new(false);
 
         let mut poll_timeout = None;
-        let mut low_battery = false;
         let config = Config::get();
         let config_sound = &config.sound;
 
@@ -222,7 +222,13 @@ impl NotifHelper {
             .body("Volume")
             .icon(&config_sound.icon_path)
             .hint(Hint::Value(pa_volume_to_percent(sink_info.volume.avg().0)))
-            .on_close(|_| NOTIF_CLOSED.store(true, Ordering::Relaxed));
+            .on_close(|reason| {
+                if matches!(reason, CloseReason::ClosedByUser)
+                    && LOW_BATTERY.load(Ordering::Relaxed)
+                {
+                    NOTIF_CLOSED.store(true, Ordering::Relaxed);
+                }
+            });
 
         if let Some(bus) = sink_info.proplist.get_str("device.bus") {
             if bus == "bluetooth" {
@@ -237,21 +243,16 @@ impl NotifHelper {
             );
 
             if battery <= config_sound.sink_bluetooth_low_battery_warn_at {
-                let timeout = config_sound.sink_bluetooth_low_battery_timeout;
-                low_battery = true;
-
-                self.sink_notif.timeout(Timeout::from(timeout));
+                LOW_BATTERY.store(true, Ordering::Relaxed);
+                self.sink_notif.timeout(Timeout::from(
+                    config_sound.sink_bluetooth_low_battery_timeout,
+                ));
                 self.sink_notif.urgency(Urgency::Critical);
                 self.sink_notif
                     .body
                     .push_str(&format!(" ({}%) Low battery", battery));
             } else {
-                let _ = NOTIF_CLOSED.compare_exchange(
-                    true,
-                    false,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                );
+                LOW_BATTERY.store(false, Ordering::Relaxed);
                 self.sink_notif.body.push_str(&format!(" ({}%)", battery));
             }
         };
@@ -265,9 +266,13 @@ impl NotifHelper {
             self.sink_notif.icon += &config_sound.sink_icon;
         }
 
-        if !only_low || (low_battery && !NOTIF_CLOSED.load(Ordering::Relaxed)) {
+        if !only_low
+            || (LOW_BATTERY.load(Ordering::Relaxed) && !NOTIF_CLOSED.load(Ordering::Relaxed))
+        {
             self.sink_notif.show();
         }
+
+        NOTIF_CLOSED.store(false, Ordering::Relaxed);
 
         poll_timeout
     }
