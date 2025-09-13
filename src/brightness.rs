@@ -1,8 +1,7 @@
 use crate::config::Config;
 use crate::netlink::utils as ev_utils;
 use crate::netlink::{NetlinkError, NetlinkHandle, Uevent};
-use crate::notif::NotifWrapper;
-use notify_rust::Hint;
+use crate::notif::{Hint, Notification, Timeout};
 use std::io::ErrorKind;
 use std::str::FromStr;
 
@@ -47,7 +46,7 @@ pub fn routine() -> impl crate::Routine {
     || {
         let mut last_brightness = 0; // TODO: replace with actual value
         let mut handle = NetlinkHandle::new().unwrap();
-        let mut notif = NotifWrapper::new();
+        let mut notif = Notification::new();
 
         loop {
             let brightness_config = Config::get().brightness;
@@ -76,8 +75,8 @@ pub fn routine() -> impl crate::Routine {
                             "{}{}",
                             brightness_config.icon_path, brightness_config.icon
                         ))
-                        .timeout(3000)
-                        .hint(Hint::CustomInt("value".into(), last_brightness as i32));
+                        .timeout(Timeout::Millis(3000))
+                        .hint(Hint::Value(last_brightness as i32));
                     notif.show();
                 }
                 Err(NetlinkError::IO(ErrorKind::Interrupted)) => (),

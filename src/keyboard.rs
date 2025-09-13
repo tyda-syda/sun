@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::notif::NotifWrapper;
+use crate::notif::{Notification, Timeout};
 use serde_json;
 use std::io::{BufRead, BufReader, Error, ErrorKind, Write};
 use std::net::Shutdown;
@@ -181,8 +181,10 @@ fn layout_provider() -> LayoutFunc {
 
 pub fn routine() -> impl crate::Routine {
     || {
-        let mut notif = NotifWrapper::new();
+        let mut notif = Notification::new();
         let mut get_layout = layout_provider();
+
+        notif.timeout(Timeout::Millis(2500)).summary("Layout");
 
         loop {
             let keyboard_config = Config::get().keyboard;
@@ -198,14 +200,12 @@ pub fn routine() -> impl crate::Routine {
             };
 
             notif
-                .timeout(2500)
-                .summary("Layout")
                 .body(&layout)
                 .icon(&format!(
                     "{}{}",
                     keyboard_config.icon_path, keyboard_config.icon
-                ));
-            notif.show();
+                ))
+                .show();
         }
     }
 }

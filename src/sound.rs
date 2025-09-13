@@ -1,7 +1,6 @@
 use crate::config::Config;
-use crate::notif::NotifWrapper;
+use crate::notif::{Hint, Notification, Timeout, Urgency};
 use libpulse_binding as pa;
-use notify_rust::{Hint, Timeout, Urgency};
 use pa::callbacks::ListResult;
 use pa::context::introspect::{SinkInfo, SourceInfo};
 use pa::context::subscribe::{Facility, InterestMaskSet};
@@ -12,6 +11,7 @@ use pa::time::MicroSeconds;
 use pa::volume::Volume;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use zbus::blocking::connection;
 use zvariant;
 
@@ -42,8 +42,8 @@ struct ContextHelper {
 
 struct NotifHelper {
     zbus: zbus::blocking::Connection,
-    sink_notif: NotifWrapper,
-    source_notif: NotifWrapper,
+    sink_notif: Notification,
+    source_notif: Notification,
 }
 
 impl ContextHelper {
@@ -180,8 +180,8 @@ impl NotifHelper {
     fn new() -> Self {
         Self {
             zbus: connection::Connection::system().unwrap(),
-            sink_notif: NotifWrapper::new(),
-            source_notif: NotifWrapper::new(),
+            sink_notif: Notification::new(),
+            source_notif: Notification::new(),
         }
     }
 
@@ -209,20 +209,20 @@ impl NotifHelper {
         sink_info: &SinkInfo<'static>,
         only_low: bool,
     ) -> Option<MicroSeconds> {
+        static NOTIF_CLOSED: AtomicBool = AtomicBool::new(false);
+
         let mut poll_timeout = None;
         let mut low_battery = false;
         let config = Config::get();
         let config_sound = &config.sound;
 
         self.sink_notif
-            .timeout(config_sound.sink_notification_timeout)
+            .timeout(Timeout::from(config_sound.sink_notification_timeout))
             .summary("Sound")
             .body("Volume")
             .icon(&config_sound.icon_path)
-            .hint(Hint::CustomInt(
-                "value".into(),
-                pa_volume_to_percent(sink_info.volume.avg().0),
-            ));
+            .hint(Hint::Value(pa_volume_to_percent(sink_info.volume.avg().0)))
+            .on_close(|| NOTIF_CLOSED.store(true, Ordering::Relaxed));
 
         if let Some(bus) = sink_info.proplist.get_str("device.bus") {
             if bus == "bluetooth" {
@@ -230,7 +230,7 @@ impl NotifHelper {
             }
         }
 
-        // we can receive new device event before it can register its battery in dbus
+        // we can receive new device event before it can register battery in dbus
         if let Some(battery) = self.bluetooth_battery(&sink_info.proplist) {
             poll_timeout = Some(
                 MicroSeconds::from_secs(config_sound.sink_bluetooth_battery_poll_timeout).unwrap(),
@@ -240,17 +240,18 @@ impl NotifHelper {
                 let timeout = config_sound.sink_bluetooth_low_battery_timeout;
                 low_battery = true;
 
-                self.sink_notif.timeout = if timeout < 0 {
-                    Timeout::Never
-                } else {
-                    Timeout::Milliseconds(timeout as u32)
-                };
-
+                self.sink_notif.timeout(Timeout::from(timeout));
                 self.sink_notif.urgency(Urgency::Critical);
                 self.sink_notif
                     .body
                     .push_str(&format!(" ({}%) Low battery", battery));
             } else {
+                let _ = NOTIF_CLOSED.compare_exchange(
+                    true,
+                    false,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                );
                 self.sink_notif.body.push_str(&format!(" ({}%)", battery));
             }
         };
@@ -264,7 +265,7 @@ impl NotifHelper {
             self.sink_notif.icon += &config_sound.sink_icon;
         }
 
-        if !only_low || low_battery {
+        if !only_low || (low_battery && !NOTIF_CLOSED.load(Ordering::Relaxed)) {
             self.sink_notif.show();
         }
 
@@ -278,12 +279,11 @@ impl NotifHelper {
             .summary("Mic")
             .body("Volume")
             .urgency(Urgency::Normal)
-            .timeout(config_sound.source_notification_timeout)
+            .timeout(Timeout::from(config_sound.source_notification_timeout))
             .icon(&config_sound.icon_path)
-            .hint(Hint::CustomInt(
-                "value".into(),
-                pa_volume_to_percent(source_info.volume.avg().0),
-            ));
+            .hint(Hint::Value(pa_volume_to_percent(
+                source_info.volume.avg().0,
+            )));
 
         if source_info.mute {
             self.source_notif.summary.push_str(" muted");
