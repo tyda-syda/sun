@@ -222,7 +222,7 @@ impl NotifHelper {
             .body("Volume")
             .icon(&config_sound.icon_path)
             .hint(Hint::Value(pa_volume_to_percent(sink_info.volume.avg().0)))
-            .on_close(|| NOTIF_CLOSED.store(true, Ordering::Relaxed));
+            .on_close(|_| NOTIF_CLOSED.store(true, Ordering::Relaxed));
 
         if let Some(bus) = sink_info.proplist.get_str("device.bus") {
             if bus == "bluetooth" {

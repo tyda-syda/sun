@@ -5,6 +5,7 @@ use tokio::runtime::{Builder, Runtime};
 use zbus::blocking::{connection::Connection, proxy::Proxy};
 use zvariant::Value;
 
+const APP_NAME: &'static str = "sun";
 const BUS_NAME: &'static str = "org.freedesktop.Notifications";
 const OBJ_PATH: &'static str = "/org/freedesktop/Notifications";
 const IFACE: &'static str = "org.freedesktop.Notifications";
@@ -12,11 +13,19 @@ const IFACE: &'static str = "org.freedesktop.Notifications";
 static ZBUS: LazyLock<Connection> = LazyLock::new(|| Connection::session().unwrap());
 static RT: LazyLock<Runtime> = LazyLock::new(|| Builder::new_multi_thread().build().unwrap());
 
-pub trait CloseHandler: FnMut() + Sync + Send + 'static {}
+pub trait CloseHandler: FnMut(CloseReason) + Sync + Send + 'static {}
 
-impl<T: FnMut() + Sync + Send + 'static> CloseHandler for T {}
+impl<T: FnMut(CloseReason) + Sync + Send + 'static> CloseHandler for T {}
 
-#[derive(Hash, Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum CloseReason {
+    Expired,
+    ClosedByUser,
+    ClosedByCall,
+    Undefined(u32),
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Timeout {
     Never,
     Millis(u32),
@@ -49,14 +58,19 @@ pub struct Notification {
     close_handler_context: Option<CloseHandlerContext>,
 }
 
-impl Default for Timeout {
-    fn default() -> Self {
-        Timeout::Never
+impl From<u32> for CloseReason {
+    fn from(value: u32) -> Self {
+        match value {
+            1 => CloseReason::Expired,
+            2 => CloseReason::ClosedByUser,
+            3 => CloseReason::ClosedByCall,
+            other => CloseReason::Undefined(other),
+        }
     }
 }
 
 impl From<i32> for Timeout {
-    fn from(value: i32) -> Timeout {
+    fn from(value: i32) -> Self {
         if value > 0 {
             return Timeout::Millis(value as u32);
         } else {
@@ -156,7 +170,7 @@ impl Notification {
                 Some(IFACE),
                 "Notify",
                 &(
-                    "sun",
+                    APP_NAME,
                     self.id,
                     &self.icon,
                     &self.summary,
@@ -191,9 +205,10 @@ impl Notification {
                         for msg in proxy.receive_signal("NotificationClosed").unwrap() {
                             let body = msg.body();
                             let structure = body.deserialize::<zvariant::Structure>().unwrap();
+                            let fields = structure.fields();
 
-                            if matches!(structure.fields()[0], Value::U32(id) if id == notif_id.load(Ordering::Relaxed)) {
-                                handler();
+                            if matches!(fields[0], Value::U32(id) if id == notif_id.load(Ordering::Relaxed)) {
+                                handler(CloseReason::from(fields[1].downcast_ref::<u32>().unwrap()));
                             }
                         }
                     }
