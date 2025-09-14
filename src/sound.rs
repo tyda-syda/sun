@@ -255,7 +255,7 @@ impl NotifHelper {
                 LOW_BATTERY.store(false, Ordering::Relaxed);
                 self.sink_notif.body.push_str(&format!(" ({}%)", battery));
             }
-        };
+        }
 
         if sink_info.mute {
             self.sink_notif.summary.push_str(" muted");
@@ -270,9 +270,8 @@ impl NotifHelper {
             || (LOW_BATTERY.load(Ordering::Relaxed) && !NOTIF_CLOSED.load(Ordering::Relaxed))
         {
             self.sink_notif.show();
+            NOTIF_CLOSED.store(false, Ordering::Relaxed);
         }
-
-        NOTIF_CLOSED.store(false, Ordering::Relaxed);
 
         poll_timeout
     }
