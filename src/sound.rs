@@ -221,6 +221,7 @@ impl NotifHelper {
             .summary("Sound")
             .body("Volume")
             .icon(&config_sound.icon_path)
+            .urgency(Urgency::Normal)
             .hint(Hint::Value(pa_volume_to_percent(sink_info.volume.avg().0)))
             .on_close(|reason| {
                 if matches!(reason, CloseReason::ClosedByUser)
