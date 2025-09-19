@@ -1,8 +1,7 @@
 use crate::config::Config;
 use crate::netlink::utils as ev_utils;
 use crate::netlink::{NetlinkError, NetlinkHandle, Uevent};
-use crate::notif::NotifWrapper;
-use notify_rust::Urgency;
+use crate::notif::{Notification, Timeout, Urgency};
 use std::fs;
 use std::io::ErrorKind;
 use std::str::FromStr;
@@ -103,7 +102,7 @@ impl ToString for Status {
 pub fn routine() -> impl crate::Routine {
     || {
         let mut handle = NetlinkHandle::new().unwrap();
-        let mut notif = NotifWrapper::new();
+        let mut notif = Notification::new();
         let mut last_status = UeventPowerSupply::new().unwrap().status;
         let mut poll_timeout = Config::get().battery.poll_timeout;
         let mut full = false;
@@ -131,7 +130,7 @@ pub fn routine() -> impl crate::Routine {
                     notif
                         .urgency(Urgency::Normal)
                         .body(last_status.to_string().as_str())
-                        .timeout(2500);
+                        .timeout(Timeout::Millis(2500));
 
                     let level = format!("{}0", std::cmp::max(ev.capacity / 10, 1));
                     let icon = match last_status {
@@ -166,7 +165,9 @@ pub fn routine() -> impl crate::Routine {
                 Err(NetlinkError::Timeout) => {
                     let uevent = UeventPowerSupply::new().unwrap();
 
-                    notif.body(last_status.to_string().as_str()).timeout(0);
+                    notif
+                        .body(last_status.to_string().as_str())
+                        .timeout(Timeout::Never);
 
                     if !full && uevent.status == Status::Full {
                         full = true;

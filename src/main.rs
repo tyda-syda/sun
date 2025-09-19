@@ -8,9 +8,8 @@ mod notif;
 mod sound;
 
 use crate::config::Config;
-use crate::notif::NotifWrapper;
+use crate::notif::{Notification, Timeout, Urgency};
 use knuffel::errors::Error as KnuffelError;
-use notify_rust::{Timeout, Urgency};
 use std::collections::HashMap;
 use std::os::unix::thread::JoinHandleExt;
 use std::process::exit;
@@ -57,7 +56,7 @@ fn setup_sigaction(sender: Sender<Message>) {
     }
 
     std::panic::set_hook(Box::new(move |info| {
-        let mut notif = notif::NotifWrapper::new();
+        let mut notif = Notification::new();
         let config = Config::get();
         let payload = info.payload();
         let try_send = |p| {
@@ -72,7 +71,7 @@ fn setup_sigaction(sender: Sender<Message>) {
         };
 
         notif
-            .timeout(0)
+            .timeout(Timeout::Never)
             .urgency(Urgency::Critical)
             .summary("SUN just died")
             .body("Checks logs for details")
@@ -155,14 +154,13 @@ fn main() {
                 );
             }
             Ok(Message::ConfigReloadError(err)) => {
-                NotifWrapper::new()
+                Notification::new()
                     .summary("SUN failed to parse config")
                     .body("Check logs for details")
                     .urgency(Urgency::Critical)
                     .timeout(Timeout::Never)
                     .icon(&Config::get().error_icon)
-                    .show()
-                    .unwrap();
+                    .show();
                 println!("config parse error:\n{err:#?}");
             }
             Ok(Message::ModulePanic(payload)) => {
