@@ -45,7 +45,7 @@ pub enum Hint {
 
 struct CloseHandlerContext {
     notif_id: Arc<AtomicU32>,
-    close_handler: Arc<dyn CloseHandler>,
+    close_handler: Option<Box<dyn CloseHandler>>,
 }
 
 pub struct Notification {
@@ -146,9 +146,15 @@ impl Notification {
     }
 
     pub fn on_close(&mut self, handler: impl CloseHandler) -> &mut Self {
+        if let Some(ref ctx) = self.close_handler_context {
+            if let None = ctx.close_handler {
+                return self;
+            }
+        }
+
         let ctx = CloseHandlerContext {
             notif_id: Arc::new(AtomicU32::new(0)),
-            close_handler: Arc::new(handler),
+            close_handler: Some(Box::new(handler)),
         };
 
         self.close_handler_context = Some(ctx);
@@ -187,29 +193,19 @@ impl Notification {
 
         self.id = notif_id;
 
-        if let Some(ref ctx) = self.close_handler_context {
-            // start close handler only once
-            if ctx.notif_id.load(Ordering::Relaxed) == 0 {
-                let mut handler = Arc::clone(&ctx.close_handler);
+        if let Some(ref mut ctx) = self.close_handler_context {
+            if let Some(mut handler) = ctx.close_handler.take() {
                 let notif_id = Arc::clone(&ctx.notif_id);
                 let proxy = Proxy::new(&ZBUS, BUS_NAME, OBJ_PATH, IFACE).unwrap();
 
                 RT.spawn(async move {
-                    let handler = loop {
-                        if let Some(handler) = Arc::get_mut(&mut handler) {
-                            break handler;
-                        }
-                    };
+                    for msg in proxy.receive_signal("NotificationClosed").unwrap() {
+                        let body = msg.body();
+                        let structure = body.deserialize::<zvariant::Structure>().unwrap();
+                        let fields = structure.fields();
 
-                    loop {
-                        for msg in proxy.receive_signal("NotificationClosed").unwrap() {
-                            let body = msg.body();
-                            let structure = body.deserialize::<zvariant::Structure>().unwrap();
-                            let fields = structure.fields();
-
-                            if matches!(fields[0], Value::U32(id) if id == notif_id.load(Ordering::Relaxed)) {
-                                handler(CloseReason::from(fields[1].downcast_ref::<u32>().unwrap()));
-                            }
+                        if matches!(fields[0], Value::U32(id) if id == notif_id.load(Ordering::Relaxed)) {
+                            handler(CloseReason::from(fields[1].downcast_ref::<u32>().unwrap()));
                         }
                     }
                 });
