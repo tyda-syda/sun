@@ -10,6 +10,7 @@ const SYS_PATH: &'static str = "/sys/class/power_supply/{name}/uevent";
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum Status {
+    NotCharging,
     Charging,
     Discharging,
     Full,
@@ -70,7 +71,9 @@ impl Uevent<String> for UeventPowerSupply {
 
 impl From<&str> for Status {
     fn from(value: &str) -> Self {
-        if value == "Charging" {
+        if value == "Not charging" {
+            Status::NotCharging
+        } else if value == "Charging" {
             Status::Charging
         } else if value == "Discharging" {
             Status::Discharging
@@ -92,6 +95,7 @@ impl ToString for Status {
     fn to_string(&self) -> String {
         match self {
             Status::Discharging => "Discharging".into(),
+            Status::NotCharging => "Not charging".into(),
             Status::Charging => "Charging".into(),
             Status::Full => "Full".into(),
             Status::Unknown(val) => val.into(),
@@ -141,7 +145,7 @@ pub fn routine() -> impl crate::Routine {
                                 config_battery.discharging_icon
                             }
                         }
-                        Status::Charging => {
+                        Status::NotCharging | Status::Charging => {
                             if config_battery.dynamic_charging_icon {
                                 config_battery.charging_icon.replace("{level}", &level)
                             } else {
