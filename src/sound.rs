@@ -251,7 +251,7 @@ impl NotifHelper {
                 self.sink_notif.urgency(Urgency::Critical);
                 self.sink_notif
                     .body
-                    .push_str(&format!(" ({}%) Low battery", battery));
+                    .push_str(&format!(" ({battery}%) Low battery"));
             } else {
                 LOW_BATTERY.store(false, Ordering::Relaxed);
                 self.sink_notif.body.push_str(&format!(" ({}%)", battery));
