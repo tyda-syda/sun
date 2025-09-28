@@ -107,6 +107,8 @@ pub struct Sound {
     pub sink_bluetooth_icon: String,
     #[knuffel(child, unwrap(argument), default = 30)]
     pub sink_bluetooth_battery_poll_timeout: u64,
+    #[knuffel(child, unwrap(argument), default = 1000)]
+    pub sink_bluetooth_battery_connect_poll_timeout: u64,
     #[knuffel(child, unwrap(argument), default = 15)]
     pub sink_bluetooth_low_battery_warn_at: u8,
     #[knuffel(child, unwrap(argument), default = -1)]

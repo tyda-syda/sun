@@ -12,6 +12,7 @@ use pa::volume::Volume;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
 use zbus::blocking::connection;
 use zvariant;
 
@@ -187,19 +188,35 @@ impl NotifHelper {
 
     fn bluetooth_battery(&self, props: &Proplist) -> Option<u8> {
         let bluez_path = props.get_str("api.bluez5.path")?;
-        let body = self
-            .zbus
-            .call_method(
+        let poll_timeout = Duration::from_millis(
+            Config::get()
+                .sound
+                .sink_bluetooth_battery_connect_poll_timeout,
+        );
+        let start = SystemTime::now();
+        let msg = loop {
+            let msg = self.zbus.call_method(
                 Some("org.bluez"),
-                bluez_path,
+                bluez_path.clone(),
                 Some("org.freedesktop.DBus.Properties"),
                 "Get",
                 &("org.bluez.Battery1", "Percentage"),
-            )
-            .ok()?
-            .body();
+            );
 
-        body.deserialize::<zvariant::Structure>().ok()?.fields()[0]
+            if let Ok(_) = msg {
+                break msg;
+            }
+
+            if start.elapsed().unwrap() >= poll_timeout {
+                break msg;
+            }
+        };
+
+        msg.ok()?
+            .body()
+            .deserialize::<zvariant::Structure>()
+            .ok()?
+            .fields()[0]
             .downcast_ref::<u8>()
             .ok()
     }
