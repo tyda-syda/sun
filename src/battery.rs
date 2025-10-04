@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::netlink::utils as ev_utils;
 use crate::netlink::{NetlinkError, NetlinkHandle, Uevent};
 use crate::notif::{Notification, Timeout, Urgency};
@@ -103,12 +103,20 @@ impl ToString for Status {
     }
 }
 
+fn timeout_to_msec(timeout: config::Timeout) -> i32 {
+    match timeout {
+        config::Timeout::Never => -1,
+        config::Timeout::Seconds(secs) => (secs * 1000) as i32,
+        config::Timeout::Millis(millis) => millis as i32,
+    }
+}
+
 pub fn routine() -> impl crate::Routine {
     || {
         let mut handle = NetlinkHandle::new().unwrap();
         let mut notif = Notification::new();
         let mut last_status = UeventPowerSupply::new().unwrap().status;
-        let mut poll_timeout = Config::get().battery.poll_timeout;
+        let mut poll_timeout = timeout_to_msec(Config::get().battery.poll_timeout);
         let mut full = false;
 
         loop {
@@ -127,7 +135,7 @@ pub fn routine() -> impl crate::Routine {
                     }
 
                     full = false;
-                    poll_timeout = config_battery.poll_timeout;
+                    poll_timeout = timeout_to_msec(config_battery.poll_timeout);
                     last_status = ev.status;
 
                     notif.hints.clear(); // prevents from setting multiple urgencies
