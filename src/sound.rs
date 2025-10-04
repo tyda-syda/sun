@@ -293,6 +293,8 @@ impl NotifHelper {
             }
         }
 
+        LOW_BATTERY.store(false, Ordering::Relaxed);
+
         // we can receive new device event before it can register battery in dbus
         if let Some(battery) = self.bluetooth_battery(&sink_info.proplist) {
             poll_timeout = config_sound
@@ -312,7 +314,6 @@ impl NotifHelper {
                     .body
                     .push_str(&format!(" ({battery}%) Low battery"));
             } else {
-                LOW_BATTERY.store(false, Ordering::Relaxed);
                 self.sink_notif.body.push_str(&format!(" ({}%)", battery));
             }
         }
@@ -320,7 +321,7 @@ impl NotifHelper {
         if sink_info.mute {
             self.sink_notif.summary.push_str(" muted");
             self.sink_notif.icon += &config_sound.sink_muted_icon;
-        } else if poll_timeout.is_some() {
+        } else if LOW_BATTERY.load(Ordering::Relaxed) {
             self.sink_notif.icon += &config_sound.sink_bluetooth_icon;
         } else {
             self.sink_notif.icon += &config_sound.sink_icon;
