@@ -197,14 +197,12 @@ impl From<config::Timeout> for Duration {
 }
 
 // PulseAudio doesn't have exact mapping to Timeout::Never, it uses Option::None
-impl TryFrom<config::Timeout> for MicroSeconds {
-    type Error = ();
-
-    fn try_from(val: config::Timeout) -> Result<Self, ()> {
+impl From<config::Timeout> for Option<MicroSeconds> {
+    fn from(val: config::Timeout) -> Self {
         match val {
-            config::Timeout::Never => Err(()),
-            config::Timeout::Seconds(secs) => MicroSeconds::from_secs(secs).ok_or(()),
-            config::Timeout::Millis(millis) => MicroSeconds::from_millis(millis).ok_or(()),
+            config::Timeout::Never => None,
+            config::Timeout::Seconds(secs) => MicroSeconds::from_secs(secs),
+            config::Timeout::Millis(millis) => MicroSeconds::from_millis(millis),
         }
     }
 }
@@ -300,8 +298,7 @@ impl NotifHelper {
             poll_timeout = config_sound
                 .sink_bluetooth_battery_poll_timeout
                 .clone()
-                .try_into()
-                .ok();
+                .into();
 
             if battery <= config_sound.sink_bluetooth_low_battery_warn_at {
                 LOW_BATTERY.store(true, Ordering::Relaxed);
@@ -379,8 +376,7 @@ pub fn routine() -> impl crate::Routine {
                 Config::get()
                     .sound
                     .sink_bluetooth_battery_poll_timeout
-                    .try_into()
-                    .ok()
+                    .into()
             })
             .flatten();
 
