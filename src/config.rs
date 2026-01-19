@@ -2,7 +2,9 @@ use crate::Message;
 use inotify::{EventMask, Inotify, WatchMask};
 use knuffel;
 use knuffel::errors::Error as KnuffelError;
+use regex::Regex;
 use std::io::ErrorKind;
+use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use std::sync::RwLock;
 
@@ -31,6 +33,65 @@ const DEFAULT_BATTERY_CHARGING_ICON: &'static str =
 const DEFAULT_BATTERY_DISCHARGING_ICON: &'static str = "status/battery-level-{level}-symbolic.svg";
 
 static CONFIG: RwLock<Option<Config>> = RwLock::new(None);
+
+#[derive(Default, Clone, Copy, Debug)]
+pub enum Timeout {
+    #[default]
+    Never,
+    Seconds(u64),
+    Millis(u64),
+}
+
+impl<S: knuffel::traits::ErrorSpan> knuffel::traits::DecodeScalar<S> for Timeout {
+    fn type_check(
+        type_name: &Option<knuffel::span::Spanned<knuffel::ast::TypeName, S>>,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) {
+        if let Some(name) = type_name {
+            ctx.emit_error(knuffel::errors::DecodeError::unexpected(
+                name,
+                "sound.sink-bluetooth-battery-poll-timeout",
+                "unexpected type name",
+            ));
+        }
+    }
+
+    fn raw_decode(
+        val: &knuffel::span::Spanned<knuffel::ast::Literal, S>,
+        _: &mut knuffel::decode::Context<S>,
+    ) -> Result<Self, knuffel::errors::DecodeError<S>> {
+        let reg_non_num = Regex::new(r"\D").unwrap();
+        let reg_secs = Regex::new(r"^Secs\(\d+\)$").unwrap();
+        let reg_millis = Regex::new(r"^Millis\(\d+\)$").unwrap();
+
+        match &**val {
+            knuffel::ast::Literal::String(lit) => {
+                if reg_secs.is_match(lit) {
+                    Ok(Timeout::Seconds(
+                        u64::from_str(&reg_non_num.replace_all(lit, "")).unwrap(),
+                    ))
+                } else if reg_millis.is_match(lit) {
+                    Ok(Timeout::Millis(
+                        u64::from_str(&reg_non_num.replace_all(lit, "")).unwrap(),
+                    ))
+                } else if "Never" == &**lit {
+                    Ok(Timeout::Never)
+                } else {
+                    Err(knuffel::errors::DecodeError::unexpected(
+                        val,
+                        "sound.sink-bluetooth-battery-poll-timeout",
+                        format!("unknown Timeout value: {}", lit.to_owned()),
+                    ))
+                }
+            }
+            other => Err(knuffel::errors::DecodeError::unexpected(
+                val,
+                "sound.sink-bluetooth-battery-poll-timeout",
+                format!("unexpected token: {other:?}"),
+            )),
+        }
+    }
+}
 
 #[derive(knuffel::Decode, Clone, Debug)]
 pub struct Config {
@@ -73,8 +134,8 @@ pub struct Battery {
     pub off: bool,
     #[knuffel(child, unwrap(argument), default = DEFAULT_BATTERY_TARGET.into())]
     pub target: String,
-    #[knuffel(child, unwrap(argument), default = 15 * 1000)]
-    pub poll_timeout: i32,
+    #[knuffel(child, unwrap(argument), default = Timeout::Millis(15 * 1000))]
+    pub poll_timeout: Timeout,
     #[knuffel(child, unwrap(argument), default = 15)]
     pub warn_at: u8,
     #[knuffel(child, unwrap(argument), default = DEFAULT_ICON_PATH.into())]
@@ -105,22 +166,22 @@ pub struct Sound {
     pub sink_muted_icon: String,
     #[knuffel(child, unwrap(argument), default = DEFAULT_SINK_BLUETOOTH_ICON.into())]
     pub sink_bluetooth_icon: String,
-    #[knuffel(child, unwrap(argument), default = 30)]
-    pub sink_bluetooth_battery_poll_timeout: u64,
-    #[knuffel(child, unwrap(argument), default = 1000)]
-    pub sink_bluetooth_battery_connect_poll_timeout: u64,
+    #[knuffel(child, unwrap(argument), default = Timeout::Seconds(30))]
+    pub sink_bluetooth_battery_poll_timeout: Timeout,
+    #[knuffel(child, unwrap(argument), default = Timeout::Millis(1000))]
+    pub sink_bluetooth_battery_connect_poll_timeout: Timeout,
     #[knuffel(child, unwrap(argument), default = 15)]
     pub sink_bluetooth_low_battery_warn_at: u8,
-    #[knuffel(child, unwrap(argument), default = -1)]
-    pub sink_bluetooth_low_battery_timeout: i32,
-    #[knuffel(child, unwrap(argument), default = 2500)]
-    pub sink_notification_timeout: i32,
+    #[knuffel(child, unwrap(argument), default = Timeout::Never)]
+    pub sink_bluetooth_low_battery_notification_timeout: Timeout,
+    #[knuffel(child, unwrap(argument), default = Timeout::Millis(2500))]
+    pub sink_notification_timeout: Timeout,
     #[knuffel(child, unwrap(argument), default = DEFAULT_SOURCE_ICON.into())]
     pub source_icon: String,
     #[knuffel(child, unwrap(argument), default = DEFAULT_SOURCE_MUTED_ICON.into())]
     pub source_muted_icon: String,
-    #[knuffel(child, unwrap(argument), default = 2500)]
-    pub source_notification_timeout: i32,
+    #[knuffel(child, unwrap(argument), default = Timeout::Millis(2500))]
+    pub source_notification_timeout: Timeout,
 }
 
 #[derive(knuffel::Decode, Clone, Debug, Default)]

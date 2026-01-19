@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::notif::{CloseReason, Hint, Notification, Timeout, Urgency};
 use libpulse_binding as pa;
 use pa::callbacks::ListResult;
@@ -117,8 +117,17 @@ impl ContextHelper {
             let poll_ret = self.main_loop.poll().unwrap();
             let dispatched = self.main_loop.dispatch().unwrap();
 
+            // EINTR is used to update configuration during blocking state
+            fn interrupted() -> bool {
+                unsafe {
+                    *libc::__errno_location() == libc::EINTR
+                }
+            }
+
             if timeout.is_some() && poll_ret == 0 && dispatched == 0 {
                 return PollResult::Timeout;
+            } else if poll_ret == 0 && interrupted() {
+                return PollResult::Data(Vec::new());
             }
         }
     }
@@ -177,6 +186,37 @@ impl ContextHelper {
     }
 }
 
+impl From<config::Timeout> for Duration {
+    fn from(val: config::Timeout) -> Self {
+        match val {
+            config::Timeout::Never => Duration::MAX,
+            config::Timeout::Seconds(secs) => Duration::from_secs(secs),
+            config::Timeout::Millis(millis) => Duration::from_millis(millis),
+        }
+    }
+}
+
+// PulseAudio doesn't have exact mapping to Timeout::Never, it uses Option::None
+impl From<config::Timeout> for Option<MicroSeconds> {
+    fn from(val: config::Timeout) -> Self {
+        match val {
+            config::Timeout::Never => None,
+            config::Timeout::Seconds(secs) => MicroSeconds::from_secs(secs),
+            config::Timeout::Millis(millis) => MicroSeconds::from_millis(millis),
+        }
+    }
+}
+
+impl From<config::Timeout> for Timeout {
+    fn from(val: config::Timeout) -> Self {
+        match val {
+            config::Timeout::Never => Timeout::Millis(0),
+            config::Timeout::Seconds(secs) => Timeout::Millis((secs * 1000) as u32),
+            config::Timeout::Millis(millis) => Timeout::Millis(millis as u32),
+        }
+    }
+}
+
 impl NotifHelper {
     fn new() -> Self {
         Self {
@@ -188,11 +228,10 @@ impl NotifHelper {
 
     fn bluetooth_battery(&self, props: &Proplist) -> Option<u8> {
         let bluez_path = props.get_str("api.bluez5.path")?;
-        let poll_timeout = Duration::from_millis(
-            Config::get()
-                .sound
-                .sink_bluetooth_battery_connect_poll_timeout,
-        );
+        let poll_timeout: Duration = Config::get()
+            .sound
+            .sink_bluetooth_battery_connect_poll_timeout
+            .into();
         let start = SystemTime::now();
         let msg = loop {
             let msg = self.zbus.call_method(
@@ -234,7 +273,7 @@ impl NotifHelper {
         let config_sound = &config.sound;
 
         self.sink_notif
-            .timeout(Timeout::from(config_sound.sink_notification_timeout))
+            .timeout(config_sound.sink_notification_timeout.into())
             .summary("Sound")
             .body("Volume")
             .icon(&config_sound.icon_path)
@@ -254,23 +293,27 @@ impl NotifHelper {
             }
         }
 
+        LOW_BATTERY.store(false, Ordering::Relaxed);
+
         // we can receive new device event before it can register battery in dbus
         if let Some(battery) = self.bluetooth_battery(&sink_info.proplist) {
-            poll_timeout = Some(
-                MicroSeconds::from_secs(config_sound.sink_bluetooth_battery_poll_timeout).unwrap(),
-            );
+            poll_timeout = config_sound
+                .sink_bluetooth_battery_poll_timeout
+                .clone()
+                .into();
 
             if battery <= config_sound.sink_bluetooth_low_battery_warn_at {
                 LOW_BATTERY.store(true, Ordering::Relaxed);
-                self.sink_notif.timeout(Timeout::from(
-                    config_sound.sink_bluetooth_low_battery_timeout,
-                ));
+                self.sink_notif.timeout(
+                    config_sound
+                        .sink_bluetooth_low_battery_notification_timeout
+                        .into(),
+                );
                 self.sink_notif.urgency(Urgency::Critical);
                 self.sink_notif
                     .body
                     .push_str(&format!(" ({battery}%) Low battery"));
             } else {
-                LOW_BATTERY.store(false, Ordering::Relaxed);
                 self.sink_notif.body.push_str(&format!(" ({}%)", battery));
             }
         }
@@ -278,7 +321,7 @@ impl NotifHelper {
         if sink_info.mute {
             self.sink_notif.summary.push_str(" muted");
             self.sink_notif.icon += &config_sound.sink_muted_icon;
-        } else if poll_timeout.is_some() {
+        } else if LOW_BATTERY.load(Ordering::Relaxed) {
             self.sink_notif.icon += &config_sound.sink_bluetooth_icon;
         } else {
             self.sink_notif.icon += &config_sound.sink_icon;
@@ -301,7 +344,7 @@ impl NotifHelper {
             .summary("Mic")
             .body("Volume")
             .urgency(Urgency::Normal)
-            .timeout(Timeout::from(config_sound.source_notification_timeout))
+            .timeout(config_sound.source_notification_timeout.into())
             .icon(&config_sound.icon_path)
             .hint(Hint::Value(pa_volume_to_percent(
                 source_info.volume.avg().0,
@@ -331,9 +374,12 @@ pub fn routine() -> impl crate::Routine {
         let mut poll_timeout = notif_helper
             .bluetooth_battery(&context_helper.get_default_sink_info().proplist)
             .map(|_| {
-                MicroSeconds::from_millis(Config::get().sound.sink_bluetooth_battery_poll_timeout)
-                    .unwrap()
-            });
+                Config::get()
+                    .sound
+                    .sink_bluetooth_battery_poll_timeout
+                    .into()
+            })
+            .flatten();
 
         context_helper.subscribe();
 
