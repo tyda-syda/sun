@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::netlink::utils as ev_utils;
 use crate::netlink::{NetlinkError, NetlinkHandle, Uevent};
-use crate::notif::{Hint, Notification, Timeout};
+use crate::notif::{Hint, Notification};
 use std::io::ErrorKind;
 use std::str::FromStr;
 
@@ -75,12 +75,12 @@ pub fn routine() -> impl crate::Routine {
                             "{}{}",
                             brightness_config.icon_path, brightness_config.icon
                         ))
-                        .timeout(Timeout::Millis(3000))
+                        .timeout(brightness_config.notification_timeout.into())
                         .hint(Hint::Value(last_brightness as i32));
                     notif.show();
                 }
                 Err(NetlinkError::IO(ErrorKind::Interrupted)) => (),
-                Err(NetlinkError::IO(kind)) => panic!("{kind:?}"),
+                Err(NetlinkError::IO(kind)) => println!("Brightness module IO error: {kind:?}"),
                 Err(_) => (),
             }
         }

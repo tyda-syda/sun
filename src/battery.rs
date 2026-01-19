@@ -153,14 +153,14 @@ pub fn routine() -> impl crate::Routine {
                                 config_battery.discharging_icon
                             }
                         }
-                        Status::NotCharging | Status::Charging => {
+                        Status::Charging => {
                             if config_battery.dynamic_charging_icon {
                                 config_battery.charging_icon.replace("{level}", &level)
                             } else {
                                 config_battery.charging_icon
                             }
                         }
-                        Status::Full => {
+                        Status::NotCharging | Status::Full => {
                             full = true;
                             poll_timeout = -1; // wait for uevent, no need to poll for now
                             config_battery.full_icon
@@ -203,7 +203,7 @@ pub fn routine() -> impl crate::Routine {
                     }
                 }
                 Err(NetlinkError::IO(ErrorKind::Interrupted)) => (),
-                Err(NetlinkError::IO(kind)) => panic!("{kind:?}"),
+                Err(NetlinkError::IO(kind)) => println!("Battery module IO error: {kind:?}"),
                 Err(_) => (),
             }
         }

@@ -192,6 +192,8 @@ pub struct Keyboard {
     pub icon_path: String,
     #[knuffel(child, unwrap(argument), default = DEFAULT_KEYBOARD_ICON.into())]
     pub icon: String,
+    #[knuffel(child, unwrap(argument), default = Timeout::Seconds(1))]
+    pub notification_timeout: Timeout,
 }
 
 #[derive(knuffel::Decode, Clone, Debug, Default)]
@@ -204,6 +206,8 @@ pub struct Brightness {
     pub icon: String,
     #[knuffel(child, unwrap(argument))]
     pub target: Option<String>,
+    #[knuffel(child, unwrap(argument), default = Timeout::Seconds(1))]
+    pub notification_timeout: Timeout,
 }
 
 pub fn routine(sender: Sender<Message>) -> impl crate::Routine {
