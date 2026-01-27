@@ -3,7 +3,9 @@ use inotify::{EventMask, Inotify, WatchMask};
 use knuffel;
 use knuffel::errors::Error as KnuffelError;
 use regex::Regex;
-use std::io::ErrorKind;
+use std::env::var;
+use std::fs::{File, create_dir_all, exists};
+use std::io::{Write, ErrorKind};
 use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use std::sync::RwLock;
@@ -210,15 +212,39 @@ pub struct Brightness {
     pub notification_timeout: Timeout,
 }
 
+fn ensure_cfg_file() -> String {
+    let cfg_dir = var("XDG_CONFIG_HOME")
+        .map(|dir| dir + "/sun")
+        .unwrap_or_else(|_| format!("{}/.config/sun", var("HOME").unwrap()));
+    let cfg_file = format!("{cfg_dir}/{CONFIG_FILE}");
+
+    let _ = create_dir_all(&cfg_dir);
+
+    if let Ok(false) | Err(_) = exists(&cfg_file) {
+        let mut file = File::options()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(&cfg_file)
+            .unwrap();
+
+        file.write_all(include_bytes!("../config.kdl")).unwrap();
+    };
+
+    cfg_file
+}
+
 pub fn routine(sender: Sender<Message>) -> impl crate::Routine {
     move || {
         let mut inotify = Inotify::init().unwrap();
+        let cfg_file = ensure_cfg_file();
         let mut buf =
-            vec![0; inotify::get_buffer_size(&std::path::Path::new(CONFIG_FILE)).unwrap()];
+            vec![0; inotify::get_buffer_size(&std::path::Path::new(&cfg_file)).unwrap()];
 
         inotify
             .watches()
-            .add(CONFIG_FILE, WatchMask::MODIFY)
+            .add(cfg_file, WatchMask::MODIFY)
             .unwrap();
 
         loop {
