@@ -30,6 +30,7 @@ pub enum Module {
     Keyboard,
 }
 
+#[derive(Debug)]
 pub enum Message {
     ModulePanic(String),
     ConfigReload(Config),
@@ -113,61 +114,16 @@ fn update_routine(
     }
 }
 
-fn main() {
-    let (sender, reciever) = std::sync::mpsc::channel::<Message>();
-    let mut routines = HashMap::new();
+#[tokio::main]
+async fn main() {
+    let (sender, mut reciever) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    //let mut routines = HashMap::new();
 
-    sender
-        .send(Message::ConfigReload(Config::update().unwrap()))
-        .unwrap();
-
-    setup_sigaction(sender.clone());
-
-    spawn(config::routine(sender));
+    tokio::spawn(config::routine(sender.clone()));
 
     loop {
-        match reciever.recv() {
-            Ok(Message::ConfigReload(config)) => {
-                update_routine(
-                    Module::Sound,
-                    &mut routines,
-                    config.sound.off,
-                    sound::routine(),
-                );
-                update_routine(
-                    Module::Battery,
-                    &mut routines,
-                    config.battery.off,
-                    battery::routine(),
-                );
-                update_routine(
-                    Module::Keyboard,
-                    &mut routines,
-                    config.keyboard.off,
-                    keyboard::routine(),
-                );
-                update_routine(
-                    Module::Brightness,
-                    &mut routines,
-                    config.brightness.off,
-                    brightness::routine(),
-                );
-            }
-            Ok(Message::ConfigReloadError(err)) => {
-                Notification::new()
-                    .summary("SUN failed to parse config")
-                    .body("Check logs for details")
-                    .urgency(Urgency::Critical)
-                    .timeout(Timeout::Never)
-                    .icon(&Config::get().error_icon)
-                    .show();
-                println!("config parse error:\n{err:#?}");
-            }
-            Ok(Message::ModulePanic(payload)) => {
-                println!("{payload}");
-                break;
-            }
-            Err(err) => panic!("mpsc reciever error:\n{err:#?}"),
+        if let Some(msg) = reciever.recv().await {
+            dbg!(msg);
         }
     }
 }
