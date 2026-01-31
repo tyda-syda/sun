@@ -1,13 +1,13 @@
 use crate::Message;
-use inotify::{EventMask, Inotify, WatchMask};
 use knuffel;
 use knuffel::errors::Error as KnuffelError;
 use regex::Regex;
+use std::time::{Duration, SystemTime};
 use std::env::var;
-use std::fs::{File, create_dir_all, exists};
-use std::io::{Write, ErrorKind};
+use tokio::fs::{File, create_dir_all, try_exists};
+use std::io::ErrorKind;
 use std::str::FromStr;
-use std::sync::mpsc::Sender;
+use tokio::sync::mpsc::UnboundedSender;
 use std::sync::RwLock;
 
 const CONFIG_FILE: &'static str = "config.kdl";
@@ -118,10 +118,10 @@ impl Config {
             .expect("config must be initialized before accessing it")
     }
 
-    pub fn update() -> Result<Self, KnuffelError> {
+    pub fn update(cfg_file: &str) -> Result<Self, KnuffelError> {
         let config = knuffel::parse::<Config>(
             CONFIG_FILE,
-            &std::fs::read_to_string(CONFIG_FILE).unwrap_or(include_str!("../config.kdl").into()),
+            cfg_file,
         )?;
 
         *CONFIG.write().unwrap() = Some(config.clone());
@@ -212,56 +212,86 @@ pub struct Brightness {
     pub notification_timeout: Timeout,
 }
 
-fn ensure_cfg_file() -> String {
+async fn ensure_cfg_file() -> String {
     let cfg_dir = var("XDG_CONFIG_HOME")
         .map(|dir| dir + "/sun")
         .unwrap_or_else(|_| format!("{}/.config/sun", var("HOME").unwrap()));
     let cfg_file = format!("{cfg_dir}/{CONFIG_FILE}");
 
-    let _ = create_dir_all(&cfg_dir);
+    let _ = create_dir_all(&cfg_dir).await;
 
-    if let Ok(false) | Err(_) = exists(&cfg_file) {
-        let mut file = File::options()
+    if let Ok(false) | Err(_) = try_exists(&cfg_file).await {
+        let _ = File::options()
             .create(true)
             .read(true)
             .write(true)
             .truncate(true)
             .open(&cfg_file)
+            .await
             .unwrap();
 
-        file.write_all(include_bytes!("../config.kdl")).unwrap();
-    };
+        tokio::fs::write(&cfg_file, include_bytes!("../config.kdl")).await.unwrap();
+    }
 
     cfg_file
 }
 
-pub fn routine(sender: Sender<Message>) -> impl crate::Routine {
-    move || {
-        let mut inotify = Inotify::init().unwrap();
-        let cfg_file = ensure_cfg_file();
-        let mut buf =
-            vec![0; inotify::get_buffer_size(&std::path::Path::new(&cfg_file)).unwrap()];
+pub struct FileWatcher {
+    file: String,
+    modified: SystemTime,
+}
 
-        inotify
-            .watches()
-            .add(cfg_file, WatchMask::MODIFY)
-            .unwrap();
+impl FileWatcher {
+    pub fn new(file: &str) -> Self {
+        Self {
+            file: file.to_owned(),
+            modified: SystemTime::now(),
+        }
+    }
 
+    pub async fn poll(&mut self) {
         loop {
-            for ev in inotify.read_events_blocking(&mut buf).unwrap() {
-                match Config::update() {
-                    Ok(config) => sender.send(Message::ConfigReload(config)).unwrap(),
-                    Err(err) => sender.send(Message::ConfigReloadError(err)).unwrap(),
-                }
+            tokio::time::sleep(Duration::from_millis(250)).await;
 
-                if ev.mask & EventMask::IGNORED == EventMask::IGNORED {
-                    match inotify.watches().add(CONFIG_FILE, WatchMask::MODIFY) {
-                        Err(err) if matches!(err.kind(), ErrorKind::NotFound) => (),
-                        Err(err) => panic!("inotify add watch error:\n{err:#?}"),
-                        _ => (),
+            let file = match File::open(&self.file).await {
+                Ok(f) => f,
+                Err(err) => {
+                    if !matches!(err.kind(), ErrorKind::NotFound) {
+                        eprintln!("file open error: {:#?}", err.kind());
+                    }
+
+                    continue;
+                }
+            };
+
+            match file.metadata().await {
+                Ok(data) => {
+                    match data.modified() {
+                        Ok(time) => {
+                            if time > self.modified {
+                                self.modified = time;
+                                break;
+                            }
+                        }
+                        Err(err) => eprintln!("unable to obtain modified on file {}: {err:#?}", self.file),
                     }
                 }
+                Err(err) => eprintln!("unable to obtain metadata on file {}: {err:#?}", self.file),
             }
         }
+    }
+}
+
+pub async fn routine(sender: UnboundedSender<Message>) {
+    let cfg_file = ensure_cfg_file().await;
+    let mut watcher = FileWatcher::new(&cfg_file);
+
+    loop {
+        match Config::update(&cfg_file) {
+            Ok(config) => sender.send(Message::ConfigReload(config)).unwrap(),
+            Err(err) => sender.send(Message::ConfigReloadError(err)).unwrap(),
+        }
+
+        watcher.poll().await;
     }
 }
